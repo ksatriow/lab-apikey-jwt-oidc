@@ -88,12 +88,14 @@ jobs:
         SCAN_RESULTS=$(aws ecr describe-image-scan-findings \
           --repository-name $SERVICE \
           --image-id imageTag=$IMAGE_TAG \
-          --query 'imageScanFindings.findingSeverityCounts')
+          --query 'imageScanFindings.findingSeverityCounts' --output json)
 
         echo "Scan results: $SCAN_RESULTS"
 
-        CRITICAL=$(echo $SCAN_RESULTS | jq -r '.CRITICAL // 0')
-        if [ "$CRITICAL" -gt 0 ]; then
+        # Safely parse the CRITICAL count, defaulting to 0 if null or empty
+        CRITICAL=$(echo "$SCAN_RESULTS" | jq -r '.CRITICAL // 0' 2>/dev/null || echo 0)
+
+        if [[ "$CRITICAL" -ne "null" ]] && [ "$CRITICAL" -gt 0 ]; then
           echo "❌ Critical vulnerabilities found in $SERVICE:$IMAGE_TAG!"
           exit 1
         else
