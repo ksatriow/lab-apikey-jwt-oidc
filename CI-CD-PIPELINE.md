@@ -11,12 +11,11 @@ This repository uses a **Reusable Workflow Architecture** to separate environmen
 - [build_dev.yaml](file:///Users/kukuhsatriowibowo/lab-apikey-jwt-oidc/.github/workflows/build_dev.yaml): The **Dev Caller**. Triggers on `develop` branch.
 - [build_prod.yaml](file:///Users/kukuhsatriowibowo/lab-apikey-jwt-oidc/.github/workflows/build_prod.yaml): The **Prod Caller**. Triggers on `main` branch.
 
-### How Automated Releases Work:
-1. **Manager Updates Version (In GitHub):** Go to **Settings** -> **Secrets and variables** -> **Actions** -> **Variables**.
-2. **Set Prefixed Variables:**
-   - **Production:** Update variables like `APIKEY_VERSION_PROD`, `JWT_VERSION_PROD`, etc.
-   - **Dev:** Update variables like `APIKEY_VERSION_DEV`, `JWT_VERSION_DEV`, etc.
-   - The pipeline strictly requires these service-specific variables.
+1. **Manager Updates Version (In GitHub Environments):** Go to **Settings** -> **Environments** -> Select `dev` or `production`.
+2. **Set Variables in Environment:**
+   - In the **dev** environment: Set `APIKEY_VERSION_DEV`, `JWT_VERSION_DEV`, etc.
+   - In the **production** environment: Set `APIKEY_VERSION_PROD`, `JWT_VERSION_PROD`, etc.
+3. **Trigger Release:** Run the corresponding workflow from the **Actions** tab. The template will automatically pull the correct variables from the environment you selected.
 
 *Note:* Pushes to `main` (via `build_prod.yaml`) automatically target the `production` environment, enforcing any "Required Reviewers" approval gate configured in GitHub.
 
@@ -67,13 +66,15 @@ This role will be assumed by the GitHub Action workflow.
           "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
         },
         "StringLike": {
-          "token.actions.githubusercontent.com:sub": "repo:<ORG>/<REPO>:*"
+          "token.actions.githubusercontent.com:sub": "repo:ksatriow/lab-apikey-jwt-oidc:*"
         }
       }
     }
   ]
 }
 ```
+> [!IMPORTANT]
+> Pastikan Anda menggunakan **`StringLike`** (bukan `StringEquals`) dan akhiri dengan **`:*`**. Ini wajib karena kita menggunakan "GitHub Environments" (dev/production), sehingga ID pengenal dari GitHub akan berubah-ubah formatnya. Wildcard `:*` memastikan AWS tetap mengenali repositori Anda baik saat rilis reguler maupun manual.
 
 4.  Click **Next**.
 5.  Add permissions. Create a new policy with this **Least Privilege** configuration. This restricts GitHub's access ONLY to your specific repositories:

@@ -6,18 +6,6 @@ on:
       environment:
         required: true
         type: string
-      apikey_version:
-        required: false
-        type: string
-      jwt_version:
-        required: false
-        type: string
-      oidc_app_version:
-        required: false
-        type: string
-      mock_idp_version:
-        required: false
-        type: string
 
 jobs:
   build:
@@ -36,15 +24,19 @@ jobs:
           - service: apikey
             context: ./apikey
             dockerfile: ./apikey/Dockerfile
+            var_name: APIKEY_VERSION
           - service: jwt
             context: ./jwt
             dockerfile: ./jwt/Dockerfile
+            var_name: JWT_VERSION
           - service: oidc-app
             context: ./oidc
             dockerfile: ./oidc/Dockerfile.app
+            var_name: OIDC_APP_VERSION
           - service: mock-idp
             context: ./oidc
             dockerfile: ./oidc/Dockerfile.idp
+            var_name: MOCK_IDP_VERSION
 
     steps:
     - name: Check out code
@@ -66,29 +58,15 @@ jobs:
         SERVICE: ${{ matrix.service }}
       run: |
         # Map matrix service to input version and determine variable name for error message
-        ENV_SUFFIX="${{ inputs.environment == 'production' && '_PROD' || '_DEV' }}"
-        case "$SERVICE" in
-          apikey)   
-            IMAGE_TAG="${{ inputs.apikey_version }}"
-            VAR_NAME="APIKEY_VERSION${ENV_SUFFIX}"
-            ;;
-          jwt)      
-            IMAGE_TAG="${{ inputs.jwt_version }}"
-            VAR_NAME="JWT_VERSION${ENV_SUFFIX}"
-            ;;
-          oidc-app) 
-            IMAGE_TAG="${{ inputs.oidc_app_version }}"
-            VAR_NAME="OIDC_APP_VERSION${ENV_SUFFIX}"
-            ;;
-          mock-idp) 
-            IMAGE_TAG="${{ inputs.mock_idp_version }}"
-            VAR_NAME="MOCK_IDP_VERSION${ENV_SUFFIX}"
-            ;;
-        esac
+        ENV_SUFFIX="${{ inputs.environment == 'prod' && '_PROD' || '_DEV' }}"
+        VAR_NAME="${{ matrix.var_name }}${ENV_SUFFIX}"
+        
+        # Dynamic lookup from GitHub vars context (Tries Suffix first, then Plain fallback)
+        IMAGE_TAG="${{ vars[format('{0}{1}', matrix.var_name, inputs.environment == 'prod' && '_PROD' || '_DEV')] || vars[matrix.var_name] }}"
 
         if [[ -z "$IMAGE_TAG" ]]; then
-          echo "❌ ERROR: No version tag provided for service '$SERVICE'."
-          echo "👉 Please set the variable '$VAR_NAME' in GitHub Settings > Variables > Actions."
+          echo "❌ ERROR: No version tag found for variable '$VAR_NAME'."
+          echo "👉 Please verify that '$VAR_NAME' is set in GitHub Environments > ${{ inputs.environment }} > Variables."
           exit 1
         fi
 

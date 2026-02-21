@@ -15,8 +15,4 @@ jobs:
     uses: ./.github/workflows/ecr-push.yml
     with:
       environment: dev
-      apikey_version: ${{ vars.APIKEY_VERSION_DEV }}
-      jwt_version: ${{ vars.JWT_VERSION_DEV }}
-      oidc_app_version: ${{ vars.OIDC_APP_VERSION_DEV }}
-      mock_idp_version: ${{ vars.MOCK_IDP_VERSION_DEV }}
-    secrets: inherit # Required to pass secrets (AWS_ROLE_ARN) to the reusable workflow
+    secrets: inherit
