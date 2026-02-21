@@ -1,56 +1,56 @@
 # Authentication POC Lab — API Key, JWT & OIDC
 
-Repo ini adalah lab sederhana untuk memahami tiga mekanisme autentikasi yang paling sering dibahas tapi jarang benar-benar dipahami perbedaannya secara praktis: **API Key**, **JWT**, dan **OIDC**. Setiap folder adalah implementasi mandiri yang bisa langsung dijalankan — baik via Node.js langsung maupun Docker Compose.
+Three auth mechanisms. One repo. The goal here is pretty straightforward: get a working, runnable example of API Key, JWT, and OIDC side by side so you can actually see how each one behaves rather than just reading about them.
 
-Tujuannya bukan bikin production-ready code, tapi supaya kamu bisa *lihat sendiri* alurnya, baca log-nya, dan pahami kapan harus pakai yang mana.
+Each folder is self-contained — you can run any of them independently without touching the others. Docker Compose is there if you want everything up at once.
 
 ---
 
-## Struktur Project
+## Project Layout
 
 ```
 lab-apikey-jwt-oidc/
 │
-├── apikey/                  # POC API Key (port 3001)
-│   ├── server.js            #   Express server + middleware validasi key
-│   ├── keys.js              #   Simulasi key store (ganti dengan DB/Redis di prod)
+├── apikey/                  # API Key POC (port 3001)
+│   ├── server.js            #   Express server with key validation middleware
+│   ├── keys.js              #   In-memory key store (swap for DB/Redis in prod)
 │   ├── Dockerfile
 │   └── README.md
 │
-├── jwt/                     # POC JWT (port 3002)
-│   ├── server.js            #   Login endpoint, sign & verify token
+├── jwt/                     # JWT POC (port 3002)
+│   ├── server.js            #   Login, sign, verify — the full flow
 │   ├── Dockerfile
 │   └── README.md
 │
-├── oidc/                    # POC OIDC (port 3003 + 4000)
-│   ├── mock-idp.js          #   Simulasi Identity Provider (IdP)
-│   ├── server.js            #   Relying Party — app yang pakai IdP
+├── oidc/                    # OIDC POC (port 3003 + 4000)
+│   ├── mock-idp.js          #   A real OIDC-compliant IdP running locally
+│   ├── server.js            #   The app (Relying Party) that talks to the IdP
 │   ├── Dockerfile.idp
 │   ├── Dockerfile.app
 │   └── README.md
 │
-├── docker-compose.yml       # Jalankan semua sekaligus
+├── docker-compose.yml
 └── README.md
 ```
 
 ---
 
-## Cara Menjalankan
+## Running It
 
-### Opsi 1 — Docker Compose (paling mudah)
+### Docker Compose — easiest option
 
 ```bash
-# Build dan jalankan semua service
+# Build and start everything
 docker compose up --build
 
-# Kalau mau di background
+# Run in the background
 docker compose up --build -d
 
-# Matikan semua
+# Tear it all down
 docker compose down
 ```
 
-Setelah semua container up:
+Once the containers are up:
 
 | Service | URL |
 |---|---|
@@ -59,61 +59,63 @@ Setelah semua container up:
 | Mock IdP (OIDC) | http://localhost:4000 |
 | OIDC App | http://localhost:3003 |
 
-> **Catatan Docker untuk OIDC:** Ada dua URL yang perlu dibedakan — URL yang diakses browser (`localhost:4000`) dan URL yang dipakai antar container (`mock-idp:4000` via Docker internal DNS). Ini sudah dihandle otomatis di `docker-compose.yml` lewat env var `IDP_INTERNAL_URL`.
+> **Quick note on OIDC + Docker networking:** The browser hits `localhost:4000` to reach the IdP, but the `oidc-app` container can't use `localhost` for back-channel calls — that would point to itself. So `docker-compose.yml` passes two separate env vars: `IDP_PUBLIC_URL` (what the browser uses) and `IDP_INTERNAL_URL` (what the container uses, resolved via Docker's internal DNS as `mock-idp:4000`). This is handled automatically — you don't need to change anything.
 
 ---
 
-### Opsi 2 — Node.js Langsung
+### Running with Node.js directly
+
+You'll need four terminal tabs:
 
 ```bash
-# Terminal 1
+# Tab 1
 cd apikey && npm install && npm start
 
-# Terminal 2
+# Tab 2
 cd jwt && npm install && npm start
 
-# Terminal 3 — IdP dulu
+# Tab 3 — start the IdP first
 cd oidc && npm install && node mock-idp.js
 
-# Terminal 4 — baru app-nya
+# Tab 4 — then the app
 cd oidc && node server.js
 ```
 
 ---
 
-## Penjelasan Masing-masing Metode
+## How Each Method Works
 
 ### 🔑 API Key
 
-Cara kerja paling sederhana. Server punya daftar key yang valid. Client kirim key di header atau query param, server tinggal cek apakah key ada di daftar.
+The simplest of the three. The server keeps a list of valid keys. The client includes the key on every request — either in a header or a query param — and the server just checks if it exists.
 
 ```
 Client ──[x-api-key: abc123]──► Server
-Server ──[cek di DB/store]────► Valid? Lanjut : Tolak
+Server ──[key lookup]─────────► Found? Allow : Reject
 ```
 
-**Kapan pakai ini:**
-- Komunikasi antar service (machine-to-machine) di jaringan internal
-- Public API yang perlu rate limiting per client
-- Situasi di mana kesederhanaan lebih penting daripada fitur
+**Good fit when:**
+- You're connecting services internally (machine-to-machine)
+- You need a quick way to identify clients on a public API
+- You want something running in an afternoon without a lot of infrastructure
 
-**Kekurangannya:**
-- Tidak ada identitas user — key hanya identifikasi service/client, bukan siapa yang memakai
-- Tidak ada expiry bawaan, kamu yang harus kelola lifecycle-nya
-- Kalau key bocor, perlu revoke manual
+**Trade-offs:**
+- No concept of user identity — a key represents a client or service, not a person
+- You manage the full lifecycle: rotation, expiry, revocation
+- If a key leaks, you have to revoke it manually and issue a new one
 
-**Coba langsung:**
+**Try it:**
 ```bash
-# Request valid
+# Happy path
 curl -H "x-api-key: secret-key-alice" http://localhost:3001/api/data
 
-# Coba tanpa key
+# Missing key
 curl http://localhost:3001/api/data
 
-# Coba key salah
-curl -H "x-api-key: ngawurbro" http://localhost:3001/api/data
+# Wrong key
+curl -H "x-api-key: notavalidkey" http://localhost:3001/api/data
 
-# Coba endpoint yang butuh scope 'write' padahal bob cuma punya 'read'
+# Bob only has read scope — this write request should get rejected
 curl -X POST http://localhost:3001/api/data \
   -H "x-api-key: secret-key-bob" \
   -H "Content-Type: application/json" \
@@ -124,51 +126,51 @@ curl -X POST http://localhost:3001/api/data \
 
 ### 🎫 JWT (JSON Web Token)
 
-JWT adalah token yang *membawa data di dalamnya*. Setelah login, server mengeluarkan token yang berisi informasi user (id, nama, role, waktu expired) dan ditandatangani secara kriptografis. Untuk verifikasi selanjutnya, server tinggal cek tanda tangannya — **tidak perlu query database sama sekali**.
+A JWT carries the user's data inside the token itself. After login, the server signs a token containing the user's ID, name, role, and expiry time. From that point on, every request just needs the token — the server verifies the signature without hitting the database.
 
 ```
-Client ──[POST /login + credentials]──────► Server
-Server ──[sign JWT dengan secret/key]─────► Client terima token
-
-Client ──[GET /api + Bearer token]────────► Server
-Server ──[verify signature saja]──────────► Data dari token langsung dipakai
+Client ──[POST /login]────────────────────► Server signs + returns token
+Client ──[GET /api + Bearer token]────────► Server verifies signature only
 ```
 
-Token JWT punya tiga bagian yang dipisah titik:
+The token is three Base64-encoded sections joined by dots:
+
 ```
-eyJhbGciOiJIUzI1NiJ9   ← header (algoritma)
-.eyJzdWIiOiJ1c2VyLTAwMSIsIm5hbWUiOiJBbGljZSJ9  ← payload (data user)
-.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c   ← signature (tanda tangan)
+eyJhbGciOiJIUzI1NiJ9                              ← algorithm info
+.eyJzdWIiOiJ1c2VyLTAwMSIsIm5hbWUiOiJBbGljZSJ9   ← user data
+.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c    ← signature
 ```
 
-**Kapan pakai ini:**
-- REST API stateless yang butuh membawa identitas user
-- Microservice yang butuh forward identitas dari satu service ke service lain
-- Mobile app — token disimpan di device, tidak perlu session di server
-- Saat kamu mau serverless/scalable tanpa shared session store
+Anyone can read the first two parts — the signature is what proves it hasn't been tampered with.
 
-**Kekurangannya:**
-- Token tidak bisa di-revoke sebelum expired (kecuali pakai blocklist, yang membuat stateless jadi stateful lagi)
-- Kalau secret bocor, semua token yang pernah diterbitkan bisa diverifikasi oleh siapa saja
-- Payload-nya bisa dibaca siapa saja (hanya signature yang dilindungi, bukan kontennya)
+**Good fit when:**
+- You're building a stateless REST API and don't want session storage
+- You have microservices that need to pass user identity between them
+- You're building a mobile app and want tokens stored on the device
+- You're going serverless and can't rely on sticky sessions
 
-**Coba langsung:**
+**Trade-offs:**
+- Once issued, a token is valid until it expires — you can't revoke it easily without adding a blocklist (which brings back statefulness)
+- If the signing secret leaks, every token you've ever issued becomes compromisable
+- The payload is readable by anyone — don't put sensitive data in it
+
+**Try it:**
 ```bash
-# 1. Login dan ambil token
+# Step 1 — log in and grab the token
 TOKEN=$(curl -s -X POST http://localhost:3002/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username":"alice","password":"password123"}' | \
   python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
 
-# 2. Akses protected endpoint
+# Step 2 — use it
 curl -H "Authorization: Bearer $TOKEN" http://localhost:3002/api/profile
 
-# 3. Lihat isi token tanpa verifikasi (educational)
+# Inspect the token contents (no verification — just decoding)
 curl -s -X POST http://localhost:3002/auth/decode \
   -H "Content-Type: application/json" \
   -d "{\"token\":\"$TOKEN\"}" | python3 -m json.tool
 
-# 4. Coba akses admin endpoint pakai token si Bob (role 'user', bukan 'admin')
+# Try hitting the admin endpoint with Bob's token (Bob is role: user, not admin)
 TOKEN_BOB=$(curl -s -X POST http://localhost:3002/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username":"bob","password":"password123"}' | \
@@ -180,104 +182,105 @@ curl -H "Authorization: Bearer $TOKEN_BOB" http://localhost:3002/api/admin
 
 ### 🌐 OIDC (OpenID Connect)
 
-OIDC adalah standar autentikasi yang dibangun di atas OAuth 2.0. Yang membedakannya dari API Key dan JWT adalah: **kamu tidak perlu mengelola autentikasi sendiri**. Ada pihak ketiga yang disebut Identity Provider (IdP) — bisa Google, Okta, Keycloak, Auth0, atau apapun yang OIDC-compliant — yang menangani login, password, MFA, dan segalanya. Aplikasimu hanya *mempercayai* token yang dikeluarkan IdP.
+OIDC is an identity layer on top of OAuth 2.0. The key difference from the other two is that your app never handles passwords directly. Instead, you delegate authentication to an Identity Provider (IdP) — Google, Keycloak, Okta, Auth0, whatever — and simply trust the token it issues.
+
+The flow looks like this:
 
 ```
-User ──[klik Login]──────────────────────────────────────────────────► App
-App  ──[redirect ke IdP + client_id, scope, state]──────────────────► IdP
-User ──[login di IdP]────────────────────────────────────────────────► IdP
-IdP  ──[redirect balik ke app + auth code]───────────────────────────► App
-App  ──[tukar code → ID Token + Access Token (back-channel)]─────────► IdP
-App  ──[verifikasi ID Token, buat session]───────────────────────────► User login!
+User clicks Login
+  → App redirects browser to IdP (with client_id, scope, state)
+  → User logs in at the IdP
+  → IdP redirects back to the app with a one-time auth code
+  → App exchanges that code for tokens (back-channel, never touches the browser)
+  → App validates the ID Token and creates a session
+  → Done
 ```
 
-Di POC ini, kita jalankan **mock IdP sendiri** di port 4000. Ini mensimulasikan persis alur yang akan terjadi kalau kamu pakai Google atau Keycloak — bedanya cuma URL-nya.
+This POC runs a **local mock IdP** on port 4000 that behaves exactly like a real one. The flow is identical to what you'd see with Keycloak or Google — just point the config at a different URL and it works the same way.
 
-**Kapan pakai ini:**
-- Aplikasi web yang punya user login (bukan service-to-service)
-- Butuh SSO — satu login untuk banyak aplikasi
-- Ingin pakai existing identity system perusahaan (Active Directory, Google Workspace)
-- Tidak mau pegang password user sama sekali
-- Butuh MFA, social login, audit trail dari IdP
+**Good fit when:**
+- You have actual users logging in (not service-to-service)
+- You want SSO across multiple apps
+- Your company already has an identity system (Active Directory, Google Workspace, etc.)
+- You don't want to deal with storing and hashing passwords yourself
+- You need MFA or social login without building it from scratch
 
-**Kekurangannya:**
-- Paling kompleks dari ketiganya — ada banyak moving parts (IdP, endpoint, token validation)
-- Bergantung pada ketersediaan IdP eksternal
-- Perlu dipahami dengan benar atau mudah implementasinya salah (state, nonce, audience validation)
+**Trade-offs:**
+- The most complex of the three — there are more moving parts, and getting the security details wrong (state validation, nonce, audience check) is easy to do
+- You're dependent on an external service being available
+- Overkill if you just need simple service authentication
 
-**Coba langsung:**
-1. Buka http://localhost:3003 di browser
-2. Klik "Login with Mock IdP"
-3. Pilih user (Alice atau Bob) dan klik login
-4. Kamu akan diredirect balik ke app dalam kondisi login
-5. Buka http://localhost:3003/profile untuk lihat data dari ID Token
+**Try it — browser flow:**
+1. Open http://localhost:3003
+2. Click **"Login with Mock IdP"**
+3. Pick a user (Alice or Bob) and log in
+4. You'll land back on the app, now authenticated
+5. Visit http://localhost:3003/profile to see what came back in the ID Token
 
-Atau via curl untuk lihat discovery document IdP:
+**Try it — curl:**
 ```bash
-# Ini yang dipakai app untuk tahu endpoint-endpoint IdP secara otomatis
+# See what endpoints the IdP exposes (this is how real apps discover the IdP config)
 curl http://localhost:4000/.well-known/openid-configuration | python3 -m json.tool
 
-# Public keys untuk verifikasi token
+# Public keys used for token verification
 curl http://localhost:4000/.well-known/jwks.json
 ```
 
 ---
 
-## Perbandingan
+## Comparison
 
 | | API Key | JWT | OIDC |
 |---|---|---|---|
-| **Kompleksitas setup** | Rendah | Sedang | Tinggi |
-| **Identitas user** | Tidak | Ya (dalam token) | Ya (dari IdP) |
-| **Stateless** | Tidak (butuh lookup) | Ya | Ya (setelah login) |
-| **Expiry bawaan** | Tidak | Ya (`exp` claim) | Ya |
-| **Revoke token** | Mudah (hapus key) | Sulit | Bisa (via IdP) |
-| **SSO** | Tidak | Tidak | Ya |
-| **Kelola password sendiri** | Ya | Ya | Tidak (IdP yang pegang) |
-| **Cocok untuk** | M2M, internal API | REST API, microservice | User login, enterprise SSO |
-| **Standard** | Tidak ada | RFC 7519 | OpenID Connect 1.0 |
+| **Setup complexity** | Low | Medium | High |
+| **User identity** | No | Yes (inside token) | Yes (from IdP) |
+| **Stateless** | No (needs lookup) | Yes | Yes (after login) |
+| **Token expiry** | No (manual) | Yes (`exp` claim) | Yes |
+| **Revocation** | Easy (delete key) | Hard | Possible (via IdP) |
+| **SSO support** | No | No | Yes |
+| **You manage passwords** | Yes | Yes | No (IdP handles it) |
+| **Best for** | M2M, internal APIs | REST APIs, mobile | User login, enterprise SSO |
+| **Backed by standard** | None | RFC 7519 | OpenID Connect 1.0 |
 
 ---
 
-## Panduan Memilih
-
-Kalau masih bingung mau pakai yang mana, ikuti alur berikut:
+## Picking the Right One
 
 ```
-Ada user manusia yang login?
-├── Tidak → Komunikasi antar service?
-│   ├── Perlu identitas + scope detail? → JWT (Client Credentials flow)
-│   └── Cukup identifikasi service?     → API Key
+Is a human logging in?
+├── No → Service-to-service?
+│   ├── Need identity + fine-grained scopes? → JWT (Client Credentials flow)
+│   └── Just need to identify the caller?    → API Key
 │
-└── Ya → Butuh SSO atau pakai IdP perusahaan?
-    ├── Ya → OIDC
-    └── Tidak → Kamu kelola auth sendiri?
-        ├── Ya, butuh stateless → JWT
-        └── Ya, butuh revoke mudah → Session + Cookie (di luar scope lab ini)
+└── Yes → Need SSO or an existing identity provider?
+    ├── Yes → OIDC
+    └── No → Managing auth yourself?
+        ├── Need stateless + scalable  → JWT
+        └── Need easy revocation       → Session + Cookie (outside scope of this lab)
 ```
 
 ---
 
-## Catatan Untuk Konteks Nyata
+## Before Using This in Production
 
-Beberapa hal yang perlu diingat sebelum pakai ini sebagai referensi production:
+A few things worth calling out since this is a POC:
 
-- **Hash API key** sebelum disimpan di database — jangan simpan raw key, sama seperti password
-- **JWT secret harus kuat** — minimal 256-bit random string, bukan string literal seperti di contoh ini
-- **Pakai RS256 bukan HS256** untuk JWT di sistem terdistribusi — dengan asymmetric key, service yang perlu verifikasi token tidak perlu tahu secret key-nya, cukup punya public key
-- **Validasi semua claim JWT** — jangan skip pengecekan `iss`, `aud`, dan `exp`
-- **HTTPS wajib di production** — semua token di atas berjalan plaintext kalau tidak pakai TLS
-- **OIDC butuh PKCE** untuk SPA dan mobile app — hindari Implicit Flow yang sudah deprecated
+- **Hash your API keys** before storing them — treat them like passwords, don't store the raw value
+- **Use a strong JWT secret** — generate a 256-bit random string, not a hardcoded literal like in this example
+- **Prefer RS256 over HS256** for JWT in distributed systems — with asymmetric keys, verifying services only need the public key, not the shared secret
+- **Validate all JWT claims** — don't skip checking `iss`, `aud`, and `exp`
+- **HTTPS is non-negotiable in production** — all three methods send tokens in plaintext without TLS
+- **Use PKCE for SPAs and mobile apps** with OIDC — the Implicit Flow is deprecated for good reason
 
 ---
 
 ## Dependencies
 
-| Package | Dipakai di | Fungsi |
+| Package | Used in | Purpose |
 |---|---|---|
-| `express` | Semua | HTTP framework |
-| `jsonwebtoken` | jwt, oidc | Sign dan verify JWT |
-| `bcryptjs` | jwt | Hash dan compare password |
-| `express-session` | oidc | Simpan session setelah login |
-| `node-fetch` | oidc | HTTP client untuk back-channel token exchange |
-| `uuid` | oidc | Generate state, nonce, dan authorization code |
+| `express` | all | HTTP framework |
+| `jsonwebtoken` | jwt, oidc | Sign and verify JWTs |
+| `bcryptjs` | jwt | Hash and compare passwords |
+| `express-session` | oidc | Server-side session after login |
+| `node-fetch` | oidc | Back-channel HTTP calls to the IdP |
+| `uuid` | oidc | Generate state, nonce, and auth codes |
