@@ -1,173 +1,34 @@
-# ecr-push.yml
-name: Push to Amazon ECR
+name: Build Docker Container , Push to ECR Registry & Rollout
 
 on:
+  workflow_call:
+  workflow_dispatch:
   push:
     branches: [ "main", "develop" ]
-  workflow_dispatch:
-    inputs:
-      environment:
-        description: 'Target Environment'
-        required: true
-        default: 'dev'
-        type: choice
-        options:
-          - dev
-          - production
-      service:
-        description: 'Service to build and push'
-        required: true
-        default: 'all'
-        type: choice
-        options:
-          - all
-          - apikey
-          - jwt
-          - oidc-app
-          - mock-idp
-      tag:
-        description: 'Manager Release Tag (Required, e.g., v1.2.0)'
-        required: true
-        type: string
-
-permissions:
-  id-token: write # Required for requesting the JWT
-  contents: read  # Required for actions/checkout
+  # pull_request:
+  #   branches: [main]
 
 jobs:
-  detect-changes:
+  build:
     runs-on: ubuntu-latest
-    if: github.ref_name == 'main' || github.ref_name == 'develop'
-    outputs:
-      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    # needs: [fastapi_app_test]
+
+    permissions:
+      id-token: write   # This is required for requesting the JWT
+      contents: read    # This is required for actions/checkout
+
+
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
 
-      - name: Check Paths
-        id: filter
-        uses: dorny/paths-filter@v3
-        if: github.event_name == 'push'
-        with:
-          filters: |
-            apikey:
-              - 'apikey/**'
-            jwt:
-              - 'jwt/**'
-            oidc:
-              - 'oidc/**'
+    - name: Check out code
+      uses: actions/checkout@v4
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+        aws-region: ${{ vars.AWS_REGION }}
 
-      - name: Set Matrix
-        id: set-matrix
-        run: |
-          SERVICES=()
-          
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            SELECTED="${{ github.event.inputs.service }}"
-            if [[ "$SELECTED" == "all" ]]; then
-              SERVICES=("apikey" "jwt" "oidc-app" "mock-idp")
-            else
-              SERVICES=("$SELECTED")
-            fi
-          else
-            # Push event: check which folders changed
-            if [[ "${{ steps.filter.outputs.apikey }}" == "true" ]]; then SERVICES+=("apikey"); fi
-            if [[ "${{ steps.filter.outputs.jwt }}" == "true" ]]; then SERVICES+=("jwt"); fi
-            if [[ "${{ steps.filter.outputs.oidc }}" == "true" ]]; then 
-              SERVICES+=("oidc-app" "mock-idp")
-            fi
-          fi
-          
-          if [ ${#SERVICES[@]} -eq 0 ]; then
-            JSON_ARRAY="[]"
-          else
-            JSON_ARRAY=$(printf '%s\n' "${SERVICES[@]}" | jq -R . | jq -s -c .)
-          fi
-          
-          echo "📦 Selected services: $JSON_ARRAY"
-          echo "matrix=$JSON_ARRAY" >> $GITHUB_OUTPUT
-
-  # 1. Automated Push - Test Build Only (No ECR Push)
-  build-test:
-    needs: detect-changes
-    if: ${{ github.event_name == 'push' && needs.detect-changes.outputs.matrix != '[]' && needs.detect-changes.outputs.matrix != '' }}
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        service: ${{ fromJson(needs.detect-changes.outputs.matrix) }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      - name: Build Test
-        uses: docker/build-push-action@v6
-        with:
-          context: ${{ matrix.service == 'oidc-app' || matrix.service == 'mock-idp' && './oidc' || format('./{0}', matrix.service) }}
-          file: ${{ matrix.service == 'oidc-app' && './oidc/Dockerfile.app' || matrix.service == 'mock-idp' && './oidc/Dockerfile.idp' || format('./{0}/Dockerfile', matrix.service) }}
-          push: false # NEVER PUSH ON AUTOMATED GITHUB EVENTS
-          cache-from: type=gha,scope=${{ matrix.service }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
-
-  # 2. Manager Release - Requires Input Tag and Environment Approval
-  build-and-push:
-    needs: detect-changes
-    if: ${{ github.event_name == 'workflow_dispatch' && needs.detect-changes.outputs.matrix != '[]' && needs.detect-changes.outputs.matrix != '' }}
-    runs-on: ubuntu-latest
-    environment: ${{ github.event.inputs.environment }}
-    strategy:
-      fail-fast: false
-      matrix:
-        service: ${{ fromJson(needs.detect-changes.outputs.matrix) }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
-
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
-        
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-        
-      - name: Determine Tags and Build Context
-        id: prep
-        run: |
-          SERVICE="${{ matrix.service }}"
-          IMAGE_TAG="${{ github.event.inputs.tag }}"
-          ECR_REGISTRY="${{ steps.login-ecr.outputs.registry }}"
-          
-          echo "🏷️ Building Release Tag: $IMAGE_TAG"
-          
-          echo "image_tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
-          echo "registry=$ECR_REGISTRY" >> $GITHUB_OUTPUT
-          
-          if [[ "$SERVICE" == "oidc-app" ]]; then
-            echo "context=./oidc" >> $GITHUB_OUTPUT
-            echo "dockerfile=./oidc/Dockerfile.app" >> $GITHUB_OUTPUT
-          elif [[ "$SERVICE" == "mock-idp" ]]; then
-            echo "context=./oidc" >> $GITHUB_OUTPUT
-            echo "dockerfile=./oidc/Dockerfile.idp" >> $GITHUB_OUTPUT
-          else
-            echo "context=./$SERVICE" >> $GITHUB_OUTPUT
-            echo "dockerfile=./$SERVICE/Dockerfile" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Build and Push Release
-        uses: docker/build-push-action@v6
-        with:
-          context: ${{ steps.prep.outputs.context }}
-          file: ${{ steps.prep.outputs.dockerfile }}
-          push: true
-          tags: |
-            ${{ steps.prep.outputs.registry }}/${{ matrix.service }}:${{ steps.prep.outputs.image_tag }}
-            ${{ steps.prep.outputs.registry }}/${{ matrix.service }}:latest
-          cache-from: type=gha,scope=${{ matrix.service }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v2
