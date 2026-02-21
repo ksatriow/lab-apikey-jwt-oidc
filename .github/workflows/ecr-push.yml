@@ -5,8 +5,8 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Custom tag (optional, will default to Git SHA if empty)'
-        required: false
+        description: 'Custom tag (Required during run, e.g., v1.2.0)'
+        required: true
         type: string
   push:
     branches: [ "main", "develop" ]
@@ -53,19 +53,23 @@ jobs:
       id: login-ecr
       uses: aws-actions/amazon-ecr-login@v2
       
-    - name: Build, tag, and push image to Amazon ECR
+    - name: Build and Push image to Amazon ECR
       env:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         SERVICE: ${{ matrix.service }}
         CUSTOM_TAG: ${{ github.event.inputs.tag }}
       run: |
-        IMAGE_TAG=${CUSTOM_TAG:-${{ github.sha }}}
-        echo "🏷️ Using tag: $IMAGE_TAG"
+        # In this mode, we ONLY care about manual execution
+        if [[ -z "$CUSTOM_TAG" ]]; then
+          echo "⚠️ No Manager Release Tag provided. Skipping Build & Push entirely."
+          exit 0
+        fi
+
+        IMAGE_TAG=$CUSTOM_TAG
+        echo "🏷️ Building Release Tag: $IMAGE_TAG"
         
         echo "🚀 Building $SERVICE..."
         docker build -t $ECR_REGISTRY/$SERVICE:$IMAGE_TAG -f ${{ matrix.dockerfile }} ${{ matrix.context }}
-        docker tag $ECR_REGISTRY/$SERVICE:$IMAGE_TAG $ECR_REGISTRY/$SERVICE:latest
         
-        echo "📤 Pushing $SERVICE to ECR..."
+        echo "📤 Pushing $SERVICE:$IMAGE_TAG to ECR..."
         docker push $ECR_REGISTRY/$SERVICE:$IMAGE_TAG
-        docker push $ECR_REGISTRY/$SERVICE:latest
