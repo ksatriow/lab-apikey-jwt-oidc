@@ -1,25 +1,33 @@
-name: Build Docker Container , Push to ECR Registry & Rollout
+name: Reusable ECR Push Template
 
 on:
-  push:
-    branches: [ "main", "develop" ]
-  # pull_request:
-  #   branches: [main]
-
-# -------------------------------------------------------------
-# MANAGER RELEASE VERSION
-# Change this variable before pushing to trigger a new release!
-# -------------------------------------------------------------
-env:
-  RELEASE_VERSION: "1.2.0" 
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+      apikey_version:
+        required: false
+        type: string
+      jwt_version:
+        required: false
+        type: string
+      oidc_app_version:
+        required: false
+        type: string
+      mock_idp_version:
+        required: false
+        type: string
 
 jobs:
   build:
+    name: Build & Push
     runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
 
     permissions:
-      id-token: write   # This is required for requesting the JWT
-      contents: read    # This is required for actions/checkout
+      id-token: write
+      contents: read
       
     strategy:
       fail-fast: false
@@ -28,18 +36,21 @@ jobs:
           - service: apikey
             context: ./apikey
             dockerfile: ./apikey/Dockerfile
+            input_version: ${{ inputs.apikey_version }}
           - service: jwt
             context: ./jwt
             dockerfile: ./jwt/Dockerfile
+            input_version: ${{ inputs.jwt_version }}
           - service: oidc-app
             context: ./oidc
             dockerfile: ./oidc/Dockerfile.app
+            input_version: ${{ inputs.oidc_app_version }}
           - service: mock-idp
             context: ./oidc
             dockerfile: ./oidc/Dockerfile.idp
+            input_version: ${{ inputs.mock_idp_version }}
 
     steps:
-
     - name: Check out code
       uses: actions/checkout@v4
     
@@ -47,7 +58,7 @@ jobs:
       uses: aws-actions/configure-aws-credentials@v4
       with:
         role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-        aws-region: ${{ secrets.AWS_REGION }}
+        aws-region: ${{ vars.AWS_REGION || 'ap-southeast-3' }}
 
     - name: Login to Amazon ECR
       id: login-ecr
@@ -57,12 +68,10 @@ jobs:
       env:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         SERVICE: ${{ matrix.service }}
+        IMAGE_TAG: ${{ matrix.input_version }}
       run: |
-        IMAGE_TAG=${{ env.RELEASE_VERSION }}
-        
-        # Safety Check
         if [[ -z "$IMAGE_TAG" ]]; then
-          echo "⚠️ RELEASE_VERSION is empty in the YAML file! Pipeline aborted."
+          echo "⚠️ No version tag provided for $SERVICE! Pipeline aborted."
           exit 1
         fi
 
@@ -92,7 +101,6 @@ jobs:
 
         echo "Scan results: $SCAN_RESULTS"
 
-        # Safely parse the CRITICAL count, defaulting to 0 if null or empty
         CRITICAL=$(echo "$SCAN_RESULTS" | jq -r '.CRITICAL // 0' 2>/dev/null || echo 0)
 
         if [[ "$CRITICAL" -ne "null" ]] && [ "$CRITICAL" -gt 0 ]; then
