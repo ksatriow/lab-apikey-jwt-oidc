@@ -4,15 +4,21 @@ This repository uses a high-performance, enterprise-grade GitHub Actions pipelin
 
 ## 🏗️ Pipeline Architecture
 
-This pipeline is designed to automate the release process while strictly enforcing manager-approved version numbers. It relies on a **Hardcoded Pipeline Variable**.
+This repository uses a **Reusable Workflow Architecture** to separate environments while keeping the build logic centralized.
+
+### Workflow Files:
+- [ecr-push.yml](file:///Users/kukuhsatriowibowo/lab-apikey-jwt-oidc/.github/workflows/ecr-push.yml): The **Template**. Contains the core logic for building, scanning, and pushing to ECR.
+- [build_dev.yaml](file:///Users/kukuhsatriowibowo/lab-apikey-jwt-oidc/.github/workflows/build_dev.yaml): The **Dev Caller**. Triggers on `develop` branch.
+- [build_prod.yaml](file:///Users/kukuhsatriowibowo/lab-apikey-jwt-oidc/.github/workflows/build_prod.yaml): The **Prod Caller**. Triggers on `main` branch.
 
 ### How Automated Releases Work:
-1. **Manager Updates Version:** A manager opens `.github/workflows/ecr-push.yml` in their code editor or the GitHub UI. They locate `env:` at the top and change `RELEASE_VERSION` to the new tag (e.g., `"v1.3.0"`).
-2. **Commit and Push:** The manager commits this one-line change and pushes/merges it to `main` or `develop`.
-3. **Automated Trigger:** GitHub Actions detects the code push and automatically starts the pipeline.
-4. **Build & Push:** The pipeline reads the hardcoded tag name (`v1.3.0`) and pushes the Docker images to ECR securely using OIDC matrix parallelization.
+1. **Manager Updates Version (In GitHub):** Go to **Settings** -> **Secrets and variables** -> **Actions** -> **Variables**.
+2. **Set Prefixed Variables:**
+   - **Production:** Update variables like `APIKEY_VERSION_PROD`, `JWT_VERSION_PROD`, etc.
+   - **Dev:** Update variables like `APIKEY_VERSION_DEV`, `JWT_VERSION_DEV`, etc.
+   - The pipeline strictly requires these service-specific variables.
 
-*Note:* Pushes to `main` run against the `production` environment, automatically enforcing any "Required Reviewers" gate you have configured in GitHub before reaching ECR. Pushes to `develop` go straight to the `dev` environment.
+*Note:* Pushes to `main` (via `build_prod.yaml`) automatically target the `production` environment, enforcing any "Required Reviewers" approval gate configured in GitHub.
 
 ---
 
@@ -92,7 +98,9 @@ This role will be assumed by the GitHub Action workflow.
         "ecr:InitiateLayerUpload",
         "ecr:UploadLayerPart",
         "ecr:CompleteLayerUpload",
-        "ecr:PutImage"
+        "ecr:PutImage",
+        "ecr:StartImageScan",
+        "ecr:DescribeImageScanFindings"
       ],
       "Resource": [
         "arn:aws:ecr:<REGION>:<ACCOUNT_ID>:repository/apikey",
