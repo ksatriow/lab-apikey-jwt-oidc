@@ -1,0 +1,100 @@
+name: Push to Amazon ECR
+
+on:
+  push:
+    branches: [ "main", "develop" ]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target Environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - production
+      service:
+        description: 'Service to build and push'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - apikey
+          - jwt
+          - oidc-app
+          - mock-idp
+      tag:
+        description: 'Custom tag (optional, defaults to Git SHA)'
+        required: false
+        type: string
+
+permissions:
+  id-token: write # Required for requesting the JWT
+  contents: read  # Required for actions/checkout
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    # Restrict execution to only main and develop branches
+    if: github.ref_name == 'main' || github.ref_name == 'develop'
+    # Map the environment:
+
+    # 1. Use manual input if provided (workflow_dispatch)
+    # 2. Else if branch is 'main', use 'production'
+    # 3. Else default to 'dev'
+    environment: ${{ github.event.inputs.environment || (github.ref_name == 'main' && 'production' || 'dev') }}
+    steps:
+
+
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+        aws-region: ${{ vars.AWS_REGION }}
+
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v2
+
+    - name: Build, tag, and push images to Amazon ECR
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        SELECTED_SERVICE: ${{ github.event.inputs.service || 'all' }}
+        CUSTOM_TAG: ${{ github.event.inputs.tag }}
+      run: |
+        # Determine the primary tag: use custom tag if provided, else use Git SHA
+        IMAGE_TAG=${CUSTOM_TAG:-${{ github.sha }}}
+        echo "🏷️ Using tag: $IMAGE_TAG"
+
+        # Function to build and push
+        build_and_push() {
+          local SERVICE=$1
+          local DOCKERFILE=$2
+          local CONTEXT=$3
+
+          if [[ "$SELECTED_SERVICE" == "all" || "$SELECTED_SERVICE" == "$SERVICE" ]]; then
+            echo "🚀 Building and pushing $SERVICE..."
+            if [[ -n "$DOCKERFILE" ]]; then
+              docker build -t $ECR_REGISTRY/$SERVICE:$IMAGE_TAG -f $DOCKERFILE $CONTEXT
+            else
+              docker build -t $ECR_REGISTRY/$SERVICE:$IMAGE_TAG $CONTEXT
+            fi
+            docker tag $ECR_REGISTRY/$SERVICE:$IMAGE_TAG $ECR_REGISTRY/$SERVICE:latest
+            docker push $ECR_REGISTRY/$SERVICE:$IMAGE_TAG
+            docker push $ECR_REGISTRY/$SERVICE:latest
+          else
+            echo "⏭️ Skipping $SERVICE (selected: $SELECTED_SERVICE)"
+          fi
+        }
+
+
+        # Main build sequence
+        build_and_push "apikey"   ""               "./apikey"
+        build_and_push "jwt"      ""               "./jwt"
+        build_and_push "oidc-app" "./oidc/Dockerfile.app" "./oidc"
+        build_and_push "mock-idp" "./oidc/Dockerfile.idp" "./oidc"
+
