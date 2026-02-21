@@ -6,15 +6,15 @@ This repository uses a high-performance, enterprise-grade GitHub Actions pipelin
 
 ## 🏗️ Pipeline Architecture
 
-This pipeline is designed to automate the release process while strictly enforcing manager-approved version numbers. It primarily relies on **Git Tags / GitHub Releases**.
+This pipeline is designed to automate the release process while strictly enforcing manager-approved version numbers. It relies on a **Hardcoded Pipeline Variable**.
 
 ### How Automated Releases Work:
-1. **Manager Creates a Release:** A manager goes to GitHub -> **Releases** -> **Draft a new release**. They create a new tag (e.g., `v1.2.0`) and publish the release.
-2. **Automated Trigger:** GitHub Actions detects the new tag (`on: push: tags: - 'v*'`) and automatically starts the pipeline.
-3. **Approval Gate:** Because it is a tag push, the pipeline maps to the `production` environment. It pauses and asks the manager for final authorization (clicking the "Approve" button).
-4. **Build & Push:** The pipeline extracts the exact tag name (`v1.2.0`) and pushes the Docker images to ECR securely using OIDC matrix parallelization.
+1. **Manager Updates Version:** A manager opens `.github/workflows/ecr-push.yml` in their code editor or the GitHub UI. They locate `env:` at the top and change `RELEASE_VERSION` to the new tag (e.g., `"v1.3.0"`).
+2. **Commit and Push:** The manager commits this one-line change and pushes/merges it to `main` or `develop`.
+3. **Automated Trigger:** GitHub Actions detects the code push and automatically starts the pipeline.
+4. **Build & Push:** The pipeline reads the hardcoded tag name (`v1.3.0`) and pushes the Docker images to ECR securely using OIDC matrix parallelization.
 
-*Note:* Pushes to `main` or `develop` that do not contain a Git Tag will safely execute a dry-run test but will **not** push to ECR, preventing untagged images. You can also trigger the workflow manually (`workflow_dispatch`) by supplying the `tag` input.
+*Note:* Pushes to `main` run against the `production` environment, automatically enforcing any "Required Reviewers" gate you have configured in GitHub before reaching ECR. Pushes to `develop` go straight to the `dev` environment.
 
 ---
 
