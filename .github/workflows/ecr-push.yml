@@ -36,19 +36,15 @@ jobs:
           - service: apikey
             context: ./apikey
             dockerfile: ./apikey/Dockerfile
-            input_version: ${{ inputs.apikey_version }}
           - service: jwt
             context: ./jwt
             dockerfile: ./jwt/Dockerfile
-            input_version: ${{ inputs.jwt_version }}
           - service: oidc-app
             context: ./oidc
             dockerfile: ./oidc/Dockerfile.app
-            input_version: ${{ inputs.oidc_app_version }}
           - service: mock-idp
             context: ./oidc
             dockerfile: ./oidc/Dockerfile.idp
-            input_version: ${{ inputs.mock_idp_version }}
 
     steps:
     - name: Check out code
@@ -68,10 +64,17 @@ jobs:
       env:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         SERVICE: ${{ matrix.service }}
-        IMAGE_TAG: ${{ matrix.input_version }}
       run: |
+        # Map matrix service to input version
+        case "$SERVICE" in
+          apikey)   IMAGE_TAG="${{ inputs.apikey_version }}" ;;
+          jwt)      IMAGE_TAG="${{ inputs.jwt_version }}" ;;
+          oidc-app) IMAGE_TAG="${{ inputs.oidc_app_version }}" ;;
+          mock-idp) IMAGE_TAG="${{ inputs.mock_idp_version }}" ;;
+        esac
+
         if [[ -z "$IMAGE_TAG" ]]; then
-          echo "⚠️ No version tag provided for $SERVICE! Pipeline aborted."
+          echo "⚠️ No version tag (specific or global) provided for $SERVICE! Pipeline aborted."
           exit 1
         fi
 
