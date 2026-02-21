@@ -5,17 +5,22 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Custom tag (Required during run, e.g., v1.2.0)'
-        required: true
+        description: 'Custom tag (Required if running manually, e.g., v1.2.0)'
+        required: false
         type: string
   push:
     branches: [ "main", "develop" ]
+    tags:
+      - 'v*' # Trigger automatically when a tag starting with 'v' is created (e.g., v1.0.0)
   # pull_request:
   #   branches: [main]
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    
+    # Enforce the manual approval gate if this is a Tag Release
+    environment: ${{ github.ref_type == 'tag' && 'production' || 'dev' }}
 
     permissions:
       id-token: write   # This is required for requesting the JWT
@@ -59,13 +64,18 @@ jobs:
         SERVICE: ${{ matrix.service }}
         CUSTOM_TAG: ${{ github.event.inputs.tag }}
       run: |
-        # In this mode, we ONLY care about manual execution
-        if [[ -z "$CUSTOM_TAG" ]]; then
-          echo "⚠️ No Manager Release Tag provided. Skipping Build & Push entirely."
+        # 1. Check if triggered by Git Tag
+        if [[ "${{ github.ref_type }}" == "tag" ]]; then
+          IMAGE_TAG="${{ github.ref_name }}"
+        # 2. Or check if triggered manually with a custom tag
+        elif [[ -n "$CUSTOM_TAG" ]]; then
+          IMAGE_TAG="$CUSTOM_TAG"
+        # 3. Otherwise, block the push
+        else
+          echo "⚠️ No Manager Release Tag or Git Tag provided. Skipping Build & Push entirely."
           exit 0
         fi
 
-        IMAGE_TAG=$CUSTOM_TAG
         echo "🏷️ Building Release Tag: $IMAGE_TAG"
         
         echo "🚀 Building $SERVICE..."
