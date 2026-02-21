@@ -4,18 +4,17 @@ This repository uses a high-performance, enterprise-grade GitHub Actions pipelin
 
 ## 🏗️ Pipeline Architecture
 
-The pipeline is split into a **Two-Phase Release System** to enforce strict Manager-based version numbering while maintaining rapid developer feedback.
+## 🏗️ Pipeline Architecture
 
-### Phase 1: Automated Push (Developer Feedback)
-When a developer pushes code to `main` or `develop`, the pipeline runs automatically but **stops before pushing to ECR**.
-* **Smart Filter (`detect-changes`):** Analyzes the Git diff to find exactly which folders changed (e.g., only `jwt/`). Outputs a dynamic JSON array.
-* **Build Test (`build-test`):** Uses Matrix Parallelization and Buildx Caching to perform a dry-run Docker build. This ensures the code *can* compile, providing immediate feedback without polluting the container registry with untagged or automated-SHA images.
+This pipeline is designed to automate the release process while strictly enforcing manager-approved version numbers. It primarily relies on **Git Tags / GitHub Releases**.
 
-### Phase 2: Manual Release (Manager Approval)
-When a manager decides to cut a release, they trigger the workflow manually (`workflow_dispatch`).
-* **Strict Tag Injection:** The manager MUST input their explicit release number (e.g., `v1.2.0`). Without this, the workflow cannot start.
-* **Environment Gates:** The manager selects the environment (e.g., `production`). If GitHub Environments are configured, this will pause the workflow and require a secondary human click to Approve the production deployment.
-* **Build and Push (`build-and-push`):** Bypasses the git diff, uses Matrix Parallelization to concurrently build the selected services, and securely pushes them to AWS ECR using OIDC, tagged exclusively with the Manager's version number and `latest`.
+### How Automated Releases Work:
+1. **Manager Creates a Release:** A manager goes to GitHub -> **Releases** -> **Draft a new release**. They create a new tag (e.g., `v1.2.0`) and publish the release.
+2. **Automated Trigger:** GitHub Actions detects the new tag (`on: push: tags: - 'v*'`) and automatically starts the pipeline.
+3. **Approval Gate:** Because it is a tag push, the pipeline maps to the `production` environment. It pauses and asks the manager for final authorization (clicking the "Approve" button).
+4. **Build & Push:** The pipeline extracts the exact tag name (`v1.2.0`) and pushes the Docker images to ECR securely using OIDC matrix parallelization.
+
+*Note:* Pushes to `main` or `develop` that do not contain a Git Tag will safely execute a dry-run test but will **not** push to ECR, preventing untagged images. You can also trigger the workflow manually (`workflow_dispatch`) by supplying the `tag` input.
 
 ---
 
