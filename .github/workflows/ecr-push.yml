@@ -65,16 +65,30 @@ jobs:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         SERVICE: ${{ matrix.service }}
       run: |
-        # Map matrix service to input version
+        # Map matrix service to input version and determine variable name for error message
+        ENV_SUFFIX="${{ inputs.environment == 'production' && '_PROD' || '_DEV' }}"
         case "$SERVICE" in
-          apikey)   IMAGE_TAG="${{ inputs.apikey_version }}" ;;
-          jwt)      IMAGE_TAG="${{ inputs.jwt_version }}" ;;
-          oidc-app) IMAGE_TAG="${{ inputs.oidc_app_version }}" ;;
-          mock-idp) IMAGE_TAG="${{ inputs.mock_idp_version }}" ;;
+          apikey)   
+            IMAGE_TAG="${{ inputs.apikey_version }}"
+            VAR_NAME="APIKEY_VERSION${ENV_SUFFIX}"
+            ;;
+          jwt)      
+            IMAGE_TAG="${{ inputs.jwt_version }}"
+            VAR_NAME="JWT_VERSION${ENV_SUFFIX}"
+            ;;
+          oidc-app) 
+            IMAGE_TAG="${{ inputs.oidc_app_version }}"
+            VAR_NAME="OIDC_APP_VERSION${ENV_SUFFIX}"
+            ;;
+          mock-idp) 
+            IMAGE_TAG="${{ inputs.mock_idp_version }}"
+            VAR_NAME="MOCK_IDP_VERSION${ENV_SUFFIX}"
+            ;;
         esac
 
         if [[ -z "$IMAGE_TAG" ]]; then
-          echo "⚠️ No version tag (specific or global) provided for $SERVICE! Pipeline aborted."
+          echo "❌ ERROR: No version tag provided for service '$SERVICE'."
+          echo "👉 Please set the variable '$VAR_NAME' in GitHub Settings > Variables > Actions."
           exit 1
         fi
 
