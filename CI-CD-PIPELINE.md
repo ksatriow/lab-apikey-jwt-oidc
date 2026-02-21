@@ -21,6 +21,21 @@ This repository uses a **Reusable Workflow Architecture** to separate environmen
 
 ---
 
+### 🔐 Security & IAM Roles
+
+Untuk membedakan izin AWS (*IAM Role*) antara **dev** dan **production**, kita menggunakan **GitHub Secrets** dengan akhiran (prefix) yang sama seperti variabel:
+
+1.  **Buka GitHub Settings** -> **Secrets and variables** -> **Actions** -> **Secrets**.
+2.  Tambahkan dua secret baru:
+    - **`AWS_ROLE_ARN_DEV`**: Masukkan ARN Role khusus Development.
+    - **`AWS_ROLE_ARN_PROD`**: Masukkan ARN Role khusus Production.
+
+*Note:* Pipeline akan otomatis mendeteksi environment yang sedang berjalan dan mengambil secret yang sesuai (`_DEV` jika di dev, `_PROD` jika di production).
+
+### 📜 IAM Trust Policy (Wajib Update)
+
+Karena kita menggunakan Environment, Anda **WAJIB** mengupdate **Trust Relationship** pada IAM Role di AWS Console agar mengizinkan akses dari sub-path repositori Anda:
+
 ## 🔒 Configuration Guide
 
 The following guide explains how to set up the OIDC trust relationship and GitHub Environments required for this pipeline to work.
