@@ -3,6 +3,11 @@ name: Build Docker Container , Push to ECR Registry & Rollout
 on:
   workflow_call:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Custom tag (optional, will default to Git SHA if empty)'
+        required: false
+        type: string
   push:
     branches: [ "main", "develop" ]
   # pull_request:
@@ -11,12 +16,27 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    # needs: [fastapi_app_test]
 
     permissions:
       id-token: write   # This is required for requesting the JWT
       contents: read    # This is required for actions/checkout
-
+      
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: apikey
+            context: ./apikey
+            dockerfile: ./apikey/Dockerfile
+          - service: jwt
+            context: ./jwt
+            dockerfile: ./jwt/Dockerfile
+          - service: oidc-app
+            context: ./oidc
+            dockerfile: ./oidc/Dockerfile.app
+          - service: mock-idp
+            context: ./oidc
+            dockerfile: ./oidc/Dockerfile.idp
 
     steps:
 
@@ -32,3 +52,20 @@ jobs:
     - name: Login to Amazon ECR
       id: login-ecr
       uses: aws-actions/amazon-ecr-login@v2
+      
+    - name: Build, tag, and push image to Amazon ECR
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        SERVICE: ${{ matrix.service }}
+        CUSTOM_TAG: ${{ github.event.inputs.tag }}
+      run: |
+        IMAGE_TAG=${CUSTOM_TAG:-${{ github.sha }}}
+        echo "🏷️ Using tag: $IMAGE_TAG"
+        
+        echo "🚀 Building $SERVICE..."
+        docker build -t $ECR_REGISTRY/$SERVICE:$IMAGE_TAG -f ${{ matrix.dockerfile }} ${{ matrix.context }}
+        docker tag $ECR_REGISTRY/$SERVICE:$IMAGE_TAG $ECR_REGISTRY/$SERVICE:latest
+        
+        echo "📤 Pushing $SERVICE to ECR..."
+        docker push $ECR_REGISTRY/$SERVICE:$IMAGE_TAG
+        docker push $ECR_REGISTRY/$SERVICE:latest
