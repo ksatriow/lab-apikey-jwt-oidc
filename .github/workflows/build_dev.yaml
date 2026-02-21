@@ -6,6 +6,10 @@ on:
       - develop
   workflow_dispatch: # Allow manual trigger for testing
 
+permissions:
+  id-token: write
+  contents: read
+
 jobs:
   release:
     uses: ./.github/workflows/ecr-push.yml
