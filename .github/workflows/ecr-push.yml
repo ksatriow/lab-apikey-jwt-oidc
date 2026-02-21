@@ -1,17 +1,17 @@
 name: Build Docker Container , Push to ECR Registry & Rollout
 
 on:
-  workflow_call:
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Custom tag (Required during run, e.g., v1.2.0)'
-        required: true
-        type: string
   push:
     branches: [ "main", "develop" ]
   # pull_request:
   #   branches: [main]
+
+# -------------------------------------------------------------
+# MANAGER RELEASE VERSION
+# Change this variable before pushing to trigger a new release!
+# -------------------------------------------------------------
+env:
+  RELEASE_VERSION: "1.2.0" 
 
 jobs:
   build:
@@ -57,15 +57,15 @@ jobs:
       env:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         SERVICE: ${{ matrix.service }}
-        CUSTOM_TAG: ${{ github.event.inputs.tag }}
       run: |
-        # In this mode, we ONLY care about manual execution
-        if [[ -z "$CUSTOM_TAG" ]]; then
-          echo "⚠️ No Manager Release Tag provided. Skipping Build & Push entirely."
-          exit 0
+        IMAGE_TAG=${{ env.RELEASE_VERSION }}
+        
+        # Safety Check
+        if [[ -z "$IMAGE_TAG" ]]; then
+          echo "⚠️ RELEASE_VERSION is empty in the YAML file! Pipeline aborted."
+          exit 1
         fi
 
-        IMAGE_TAG=$CUSTOM_TAG
         echo "🏷️ Building Release Tag: $IMAGE_TAG"
         
         echo "🚀 Building $SERVICE..."
