@@ -1,0 +1,66 @@
+services:
+
+  # ─────────────────────────────────────────────────────────────
+  # 1. API KEY — Simplest auth method
+  #    Access: http://localhost:3001
+  # ─────────────────────────────────────────────────────────────
+  apikey:
+    build:
+      context: ./apikey
+      dockerfile: Dockerfile
+    container_name: poc-apikey
+    ports:
+      - "3001:3001"
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────────────────────────
+  # 2. JWT — Stateless token-based auth
+  #    Access: http://localhost:3002
+  # ─────────────────────────────────────────────────────────────
+  jwt:
+    build:
+      context: ./jwt
+      dockerfile: Dockerfile
+    container_name: poc-jwt
+    ports:
+      - "3002:3002"
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────────────────────────
+  # 3a. OIDC — Mock Identity Provider (simulates Google/Keycloak)
+  #     Access: http://localhost:4000
+  # ─────────────────────────────────────────────────────────────
+  mock-idp:
+    build:
+      context: ./oidc
+      dockerfile: Dockerfile.idp
+    container_name: poc-mock-idp
+    ports:
+      - "4000:4000"
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────────────────────────
+  # 3b. OIDC — Relying Party (your app, consumes the IdP)
+  #     Access: http://localhost:3003
+  #
+  #     NETWORKING TRICK:
+  #     - IDP_PUBLIC_URL   = URL the *browser* uses to reach the IdP
+  #                          Always http://localhost:4000 (host machine)
+  #     - IDP_INTERNAL_URL = URL *this container* uses to call the IdP
+  #                          Inside Docker network, use the service name
+  #     - APP_PUBLIC_URL   = This app's public URL (for callback redirect)
+  # ─────────────────────────────────────────────────────────────
+  oidc-app:
+    build:
+      context: ./oidc
+      dockerfile: Dockerfile.app
+    container_name: poc-oidc-app
+    ports:
+      - "3003:3003"
+    depends_on:
+      - mock-idp
+    environment:
+      IDP_PUBLIC_URL: http://localhost:4000
+      IDP_INTERNAL_URL: http://mock-idp:4000
+      APP_PUBLIC_URL: http://localhost:3003
+    restart: unless-stopped

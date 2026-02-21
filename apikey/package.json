@@ -1,0 +1,12 @@
+{
+  "name": "poc-apikey",
+  "version": "1.0.0",
+  "description": "POC: API Key Authentication",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}
