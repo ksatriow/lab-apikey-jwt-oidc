@@ -4,8 +4,6 @@ This repository uses a high-performance, enterprise-grade GitHub Actions pipelin
 
 ## 🏗️ Pipeline Architecture
 
-## 🏗️ Pipeline Architecture
-
 This pipeline is designed to automate the release process while strictly enforcing manager-approved version numbers. It relies on a **Hardcoded Pipeline Variable**.
 
 ### How Automated Releases Work:

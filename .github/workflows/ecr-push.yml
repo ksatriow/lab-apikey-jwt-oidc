@@ -74,6 +74,11 @@ jobs:
         echo "📤 Pushing $SERVICE:$IMAGE_TAG to ECR..."
         docker push $ECR_REGISTRY/$SERVICE:$IMAGE_TAG
 
+        echo "🛡️ Triggering ECR Image Scan for $SERVICE:$IMAGE_TAG..."
+        aws ecr start-image-scan \
+          --repository-name $SERVICE \
+          --image-id imageTag=$IMAGE_TAG || echo "⚠️ Scan might already be running."
+
         echo "🔍 Waiting for ECR Image Scan to complete for $SERVICE:$IMAGE_TAG..."
         aws ecr wait image-scan-complete \
           --repository-name $SERVICE \
