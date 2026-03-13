@@ -106,7 +106,7 @@ jobs:
 #        fi
 
     - name: Send Simple Notification
-      uses: ksatriow/action-mailer@v1
+      uses: ksatriow/action-mailer@v1.0.0
       with:
         smtp-server: smtp.gmail.com
         smtp-port: 587
