@@ -89,6 +89,9 @@ jobs:
           push: true
           # Registry URL is dynamic: 111111111111.dkr.ecr... for Dev, 222222222222.dkr.ecr... for Prod
           tags: ${{ steps.login-ecr.outputs.registry }}/${{ matrix.service }}:${{ steps.vars.outputs.tag }}
+          # ECR Scanning Fix: Disable provenance and SBOM metadata to avoid OCI Image Index format
+          provenance: false
+          sbom: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
