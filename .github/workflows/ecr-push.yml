@@ -50,30 +50,29 @@ jobs:
           ENV_UPPER=$(echo "${{ inputs.environment }}" | tr '[:lower:]' '[:upper:]' | sed 's/PRODUCTION/PROD/')
           VAR_NAME_ENV="${{ matrix.var_name }}_${ENV_UPPER}"
           
-          TAG="${{ vars[VAR_NAME_ENV] || vars[matrix.var_name] }}"
+          # We use toJSON(vars) to pass all variables to the shell context securely
+          # Then use jq to find the environment-specific tag first, then fallback to base.
+          TAG=$(echo '${{ toJSON(vars) }}' | jq -r --arg env_key "$VAR_NAME_ENV" --arg base_key "${{ matrix.var_name }}" '.[$env_key] // .[$base_key] // ""')
           
-          if [[ -z "$TAG" ]]; then
+          if [[ -z "$TAG" || "$TAG" == "null" ]]; then
             echo "::error::No version tag found for '${{ matrix.var_name }}' or '$VAR_NAME_ENV' in environment '${{ inputs.environment }}'."
             exit 1
           fi
           
           echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "env_upper=$ENV_UPPER" >> $GITHUB_OUTPUT
           echo "🚀 Targeted Environment Account: $ENV_UPPER"
           echo "🏷️ Resolved Image Tag: $TAG"
 
       - name: Configure AWS Credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          # IMPORTANT: We use a generic secret name. 
-          # GitHub will automatically pick the ARN from the Environment defined in the 'job'.
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION || 'ap-southeast-3' }}
 
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
-        # This action automatically detects the account ID from the assumed role 
-        # and provides the correct registry URL for THAT account.
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -84,8 +83,9 @@ jobs:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
           push: true
-          # Registry URL is dynamic: 111111111111.dkr.ecr... for Dev, 222222222222.dkr.ecr... for Prod
           tags: ${{ steps.login-ecr.outputs.registry }}/${{ matrix.service }}:${{ steps.vars.outputs.tag }}
+          # ECR Scanning Fix: Disable provenance/SBOM to avoid OCI Image Index which ECR doesn't support for scanning
+          provenance: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
@@ -95,10 +95,11 @@ jobs:
       - name: Security Scan (ECR)
         id: scan
         run: |
-          echo "::group::Triggering ECR Scan for $SERVICE"
+          echo "::group::Triggering ECR Scan"
+          # Trigger scan and wait
           aws ecr start-image-scan --repository-name ${{ matrix.service }} --image-id imageTag=${{ steps.vars.outputs.tag }} || true
           
-          echo "Waiting for scan to complete in targeted AWS Account..."
+          echo "Waiting for scan to complete..."
           aws ecr wait image-scan-complete --repository-name ${{ matrix.service }} --image-id imageTag=${{ steps.vars.outputs.tag }}
           
           SCAN_RESULTS=$(aws ecr describe-image-scan-findings \
@@ -110,7 +111,7 @@ jobs:
           
           CRITICAL=$(echo "$SCAN_RESULTS" | jq -r '.CRITICAL // 0' 2>/dev/null || echo 0)
           if [[ "$CRITICAL" != "null" && "$CRITICAL" -gt 0 ]]; then
-            echo "::error::CRITICAL vulnerabilities found in ${{ matrix.service }} (Image: ${{ steps.vars.outputs.tag }})"
+            echo "::error::CRITICAL vulnerabilities found in ${{ matrix.service }}!"
             exit 1
           fi
           echo "::endgroup::"
@@ -126,7 +127,7 @@ jobs:
           to-email: kukuhdrive@gmail.com
           username: ${{ secrets.SMTP_USERNAME }}
           password: ${{ secrets.SMTP_PASSWORD }}
-          subject: "[${{ inputs.environment | upper }}] Deployment ${{ job.status }}: ${{ matrix.service }}"
+          subject: "[${{ steps.vars.outputs.env_upper }}] Deployment ${{ job.status }}: ${{ matrix.service }}"
           body: |
             Deployment Status: ${{ job.status }}
             
