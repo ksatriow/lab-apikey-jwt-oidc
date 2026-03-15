@@ -16,7 +16,7 @@ permissions:
 jobs:
   production-release:
     name: Build & Release [PROD]
-    uses: ./.github/workflows/ecr-push.yml
+    uses: ./.github/workflows/ecr-push-manual.yml
     with:
       environment: prod
     secrets: inherit
