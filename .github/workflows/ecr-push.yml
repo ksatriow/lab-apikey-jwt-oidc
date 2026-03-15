@@ -39,74 +39,74 @@ jobs:
             var_name: MOCK_IDP_VERSION
 
     steps:
-#    - name: Check out code
-#      uses: actions/checkout@v4
-#    
-#    - name: Configure AWS credentials
-#      uses: aws-actions/configure-aws-credentials@v4
-#      with:
-#        role-to-assume: ${{ inputs.environment == 'prod' && secrets.AWS_ROLE_ARN_PROD || secrets.AWS_ROLE_ARN_DEV }}
-#        aws-region: ${{ vars.AWS_REGION || 'ap-southeast-3' }}
-#
-#    - name: Login to Amazon ECR
-#      id: login-ecr
-#      uses: aws-actions/amazon-ecr-login@v2
-#      
-#    - name: Build and Push image to Amazon ECR
-#      env:
-#        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-#        SERVICE: ${{ matrix.service }}
-#      run: |
-#        # Map matrix service to input version and determine variable name for error message
-#        ENV_SUFFIX="${{ inputs.environment == 'prod' && '_PROD' || '_DEV' }}"
-#        VAR_NAME="${{ matrix.var_name }}${ENV_SUFFIX}"
-#        
-#        # Dynamic lookup from GitHub vars context (Tries Suffix first, then Plain fallback)
-#        IMAGE_TAG="${{ vars[format('{0}{1}', matrix.var_name, inputs.environment == 'prod' && '_PROD' || '_DEV')] || vars[matrix.var_name] }}"
-#
-#        if [[ -z "$IMAGE_TAG" ]]; then
-#          echo "❌ ERROR: No version tag found for variable '$VAR_NAME'."
-#          echo "👉 Please verify that '$VAR_NAME' is set in GitHub Environments > ${{ inputs.environment }} > Variables."
-#          exit 1
-#        fi
-#
-#        echo "🏷️ Building Release Tag: $IMAGE_TAG"
-#        
-#        echo "🚀 Building $SERVICE..."
-#        docker build -t $ECR_REGISTRY/$SERVICE:$IMAGE_TAG -f ${{ matrix.dockerfile }} ${{ matrix.context }}
-#        
-#        echo "📤 Pushing $SERVICE:$IMAGE_TAG to ECR..."
-#        docker push $ECR_REGISTRY/$SERVICE:$IMAGE_TAG
-#
-#        echo "🛡️ Triggering ECR Image Scan for $SERVICE:$IMAGE_TAG..."
-#        aws ecr start-image-scan \
-#          --repository-name $SERVICE \
-#          --image-id imageTag=$IMAGE_TAG || echo "⚠️ Scan might already be running."
-#
-#        echo "🔍 Waiting for ECR Image Scan to complete for $SERVICE:$IMAGE_TAG..."
-#        aws ecr wait image-scan-complete \
-#          --repository-name $SERVICE \
-#          --image-id imageTag=$IMAGE_TAG
-#
-#        echo "📊 Checking scan findings..."
-#        SCAN_RESULTS=$(aws ecr describe-image-scan-findings \
-#          --repository-name $SERVICE \
-#          --image-id imageTag=$IMAGE_TAG \
-#          --query 'imageScanFindings.findingSeverityCounts' --output json)
-#
-#        echo "Scan results: $SCAN_RESULTS"
-#
-#        CRITICAL=$(echo "$SCAN_RESULTS" | jq -r '.CRITICAL // 0' 2>/dev/null || echo 0)
-#
-#        if [[ "$CRITICAL" -ne "null" ]] && [ "$CRITICAL" -gt 0 ]; then
-#          echo "❌ Critical vulnerabilities found in $SERVICE:$IMAGE_TAG!"
-#          exit 1
-#        else
-#          echo "✅ No critical vulnerabilities found in $SERVICE:$IMAGE_TAG."
-#        fi
+    - name: Check out code
+      uses: actions/checkout@v4
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ inputs.environment == 'prod' && secrets.AWS_ROLE_ARN_PROD || secrets.AWS_ROLE_ARN_DEV }}
+        aws-region: ${{ vars.AWS_REGION || 'ap-southeast-3' }}
+
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v2
+      
+    - name: Build and Push image to Amazon ECR
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        SERVICE: ${{ matrix.service }}
+      run: |
+        # Map matrix service to input version and determine variable name for error message
+        ENV_SUFFIX="${{ inputs.environment == 'prod' && '_PROD' || '_DEV' }}"
+        VAR_NAME="${{ matrix.var_name }}${ENV_SUFFIX}"
+        
+        # Dynamic lookup from GitHub vars context (Tries Suffix first, then Plain fallback)
+        IMAGE_TAG="${{ vars[format('{0}{1}', matrix.var_name, inputs.environment == 'prod' && '_PROD' || '_DEV')] || vars[matrix.var_name] }}"
+
+        if [[ -z "$IMAGE_TAG" ]]; then
+          echo "❌ ERROR: No version tag found for variable '$VAR_NAME'."
+          echo "👉 Please verify that '$VAR_NAME' is set in GitHub Environments > ${{ inputs.environment }} > Variables."
+          exit 1
+        fi
+
+        echo "🏷️ Building Release Tag: $IMAGE_TAG"
+        
+        echo "🚀 Building $SERVICE..."
+        docker build -t $ECR_REGISTRY/$SERVICE:$IMAGE_TAG -f ${{ matrix.dockerfile }} ${{ matrix.context }}
+        
+        echo "📤 Pushing $SERVICE:$IMAGE_TAG to ECR..."
+        docker push $ECR_REGISTRY/$SERVICE:$IMAGE_TAG
+
+        echo "🛡️ Triggering ECR Image Scan for $SERVICE:$IMAGE_TAG..."
+        aws ecr start-image-scan \
+          --repository-name $SERVICE \
+          --image-id imageTag=$IMAGE_TAG || echo "⚠️ Scan might already be running."
+
+        echo "🔍 Waiting for ECR Image Scan to complete for $SERVICE:$IMAGE_TAG..."
+        aws ecr wait image-scan-complete \
+          --repository-name $SERVICE \
+          --image-id imageTag=$IMAGE_TAG
+
+        echo "📊 Checking scan findings..."
+        SCAN_RESULTS=$(aws ecr describe-image-scan-findings \
+          --repository-name $SERVICE \
+          --image-id imageTag=$IMAGE_TAG \
+          --query 'imageScanFindings.findingSeverityCounts' --output json)
+
+        echo "Scan results: $SCAN_RESULTS"
+
+        CRITICAL=$(echo "$SCAN_RESULTS" | jq -r '.CRITICAL // 0' 2>/dev/null || echo 0)
+
+        if [[ "$CRITICAL" -ne "null" ]] && [ "$CRITICAL" -gt 0 ]; then
+          echo "❌ Critical vulnerabilities found in $SERVICE:$IMAGE_TAG!"
+          exit 1
+        else
+          echo "✅ No critical vulnerabilities found in $SERVICE:$IMAGE_TAG."
+        fi
 
     - name: Send Simple Notification
-      uses: ksatriow/action-mailer@v1.0.0
+      uses: ksatriow/action-mailer@v1
       with:
         smtp-server: smtp.gmail.com
         smtp-port: 587

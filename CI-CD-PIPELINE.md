@@ -21,6 +21,17 @@ This repository uses a **Reusable Workflow Architecture** to separate environmen
 
 ---
 
+### 📧 Notifikasi Email (via curl)
+
+Pipeline ini dikonfigurasi untuk mengirimkan notifikasi status rilis (Gagal/Berhasil) ke gateway internal perusahaan menggunakan `curl`:
+
+1.  **Siapkan GitHub Secrets**:
+    - `NOTIFY_ENDPOINT`: URL API gateway perusahaan.
+    - `NOTIFY_TOKEN`: Token otentikasi (Bearer).
+2.  **Mekanisme**: Setiap build selesai (baik sukses maupun gagal), pipeline akan memicu pemanggilan API POST dengan payload JSON yang berisi status, nama service, environment, dan link log.
+
+---
+
 ### 🔐 Security & IAM Roles
 
 Untuk membedakan izin AWS (*IAM Role*) antara **dev** dan **production**, kita menggunakan **GitHub Secrets** dengan akhiran (prefix) yang sama seperti variabel:
@@ -68,24 +79,28 @@ This role will be assumed by the GitHub Action workflow.
 
 ```json
 {
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Principal": {
-        "Federated": "arn:aws:iam::<YOUR_AWS_ACCOUNT_ID>:oidc-provider/token.actions.githubusercontent.com"
-      },
-      "Action": "sts:AssumeRoleWithWebIdentity",
-      "Condition": {
-        "StringEquals": {
-          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
-        },
-        "StringLike": {
-          "token.actions.githubusercontent.com:sub": "repo:ksatriow/lab-apikey-jwt-oidc:*"
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Principal": {
+                "Federated": "arn:aws:iam::172982316609:oidc-provider/token.actions.githubusercontent.com"
+            },
+            "Action": "sts:AssumeRoleWithWebIdentity",
+            "Condition": {
+                "StringEquals": {
+                    "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
+                },
+                "StringLike": {
+                    "token.actions.githubusercontent.com:sub": [
+                        "repo:ksatriow/lab-apikey-jwt-oidc:ref:refs/heads/main",
+                        "repo:ksatriow/lab-apikey-jwt-oidc:ref:refs/heads/develop",
+                        "repo:ksatriow/lab-apikey-jwt-oidc:*"
+                    ]
+                }
+            }
         }
-      }
-    }
-  ]
+    ]
 }
 ```
 > [!IMPORTANT]
@@ -128,6 +143,45 @@ This role will be assumed by the GitHub Action workflow.
   ]
 }
 ```
+
+## EXAMPLE
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowAuthToken",
+      "Effect": "Allow",
+      "Action": "ecr:GetAuthorizationToken",
+      "Resource": "*"
+    },
+    {
+      "Sid": "AllowPushPullToSpecificRepos",
+      "Effect": "Allow",
+      "Action": [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:GetDownloadUrlForLayer",
+        "ecr:BatchGetImage",
+        "ecr:InitiateLayerUpload",
+        "ecr:UploadLayerPart",
+        "ecr:CompleteLayerUpload",
+        "ecr:PutImage",
+        "ecr:StartImageScan",
+        "ecr:DescribeImageScanFindings"
+      ],
+      "Resource": [
+        "arn:aws:ecr:ap-southeast-3:<ACCOUNT_ID>:repository/apikey",
+        "arn:aws:ecr:ap-southeast-3:<ACCOUNT_ID>:repository/jwt",
+        "arn:aws:ecr:ap-southeast-3:<ACCOUNT_ID>:repository/oidc-app",
+        "arn:aws:ecr:ap-southeast-3:<ACCOUNT_ID>:repository/mock-idp"
+      ]
+    }
+  ]
+}
+```
+
+
 > [!NOTE]
 > `ecr:GetAuthorizationToken` always requires `*` because it's a global call to authenticate with ECR. However, the subsequent actions are strictly limited to the listed repository ARNs.
 
