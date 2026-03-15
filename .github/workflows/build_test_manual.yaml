@@ -1,0 +1,22 @@
+name: Test Gated Release (Manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "yes" to trigger build and scan'
+        required: true
+        default: 'no'
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  test-manual-gate:
+    name: Test Gated Process
+    if: github.event.inputs.confirm == 'yes'
+    uses: ./.github/workflows/ecr-push-manual.yml
+    with:
+      environment: prod
+    secrets: inherit
