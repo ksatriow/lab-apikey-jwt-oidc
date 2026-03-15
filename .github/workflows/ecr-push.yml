@@ -84,8 +84,9 @@ jobs:
           file: ${{ matrix.dockerfile }}
           push: true
           tags: ${{ steps.login-ecr.outputs.registry }}/${{ matrix.service }}:${{ steps.vars.outputs.tag }}
-          # ECR Scanning Fix: Disable provenance/SBOM to avoid OCI Image Index which ECR doesn't support for scanning
+          # ECR Scanning Fix: Disable provenance and SBOM metadata to avoid OCI Image Index format
           provenance: false
+          sbom: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
@@ -107,7 +108,12 @@ jobs:
             --image-id imageTag=${{ steps.vars.outputs.tag }} \
             --query 'imageScanFindings.findingSeverityCounts' --output json)
           
-          echo "results=$SCAN_RESULTS" >> $GITHUB_OUTPUT
+          # Handle multi-line JSON output for GITHUB_OUTPUT
+          {
+            echo "results<<EOF"
+            echo "$SCAN_RESULTS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
           
           CRITICAL=$(echo "$SCAN_RESULTS" | jq -r '.CRITICAL // 0' 2>/dev/null || echo 0)
           if [[ "$CRITICAL" != "null" && "$CRITICAL" -gt 0 ]]; then
