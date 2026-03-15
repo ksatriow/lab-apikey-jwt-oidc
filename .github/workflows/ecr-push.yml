@@ -50,14 +50,17 @@ jobs:
           ENV_UPPER=$(echo "${{ inputs.environment }}" | tr '[:lower:]' '[:upper:]' | sed 's/PRODUCTION/PROD/')
           VAR_NAME_ENV="${{ matrix.var_name }}_${ENV_UPPER}"
           
-          TAG="${{ vars[VAR_NAME_ENV] || vars[matrix.var_name] }}"
+          # We use toJSON(vars) to pass all variables to the shell context securely
+          # Then use jq to find the environment-specific tag first, then fallback to base.
+          TAG=$(echo '${{ toJSON(vars) }}' | jq -r --arg env_key "$VAR_NAME_ENV" --arg base_key "${{ matrix.var_name }}" '.[$env_key] // .[$base_key] // ""')
           
-          if [[ -z "$TAG" ]]; then
+          if [[ -z "$TAG" || "$TAG" == "null" ]]; then
             echo "::error::No version tag found for '${{ matrix.var_name }}' or '$VAR_NAME_ENV' in environment '${{ inputs.environment }}'."
             exit 1
           fi
           
           echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "env_upper=$ENV_UPPER" >> $GITHUB_OUTPUT
           echo "🚀 Targeted Environment Account: $ENV_UPPER"
           echo "🏷️ Resolved Image Tag: $TAG"
 
@@ -95,7 +98,7 @@ jobs:
       - name: Security Scan (ECR)
         id: scan
         run: |
-          echo "::group::Triggering ECR Scan for $SERVICE"
+          echo "::group::Triggering ECR Scan"
           aws ecr start-image-scan --repository-name ${{ matrix.service }} --image-id imageTag=${{ steps.vars.outputs.tag }} || true
           
           echo "Waiting for scan to complete in targeted AWS Account..."
@@ -126,7 +129,7 @@ jobs:
           to-email: kukuhdrive@gmail.com
           username: ${{ secrets.SMTP_USERNAME }}
           password: ${{ secrets.SMTP_PASSWORD }}
-          subject: "[${{ inputs.environment | upper }}] Deployment ${{ job.status }}: ${{ matrix.service }}"
+          subject: "[${{ steps.vars.outputs.env_upper }}] Deployment ${{ job.status }}: ${{ matrix.service }}"
           body: |
             Deployment Status: ${{ job.status }}
             
