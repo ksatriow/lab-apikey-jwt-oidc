@@ -1,0 +1,148 @@
+name: Reusable ECR to Lambda (Approved)
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+        description: "Target environment (e.g., dev, prod)"
+
+jobs:
+  build-and-scan:
+    name: Build & Scan (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    
+    permissions:
+      id-token: write
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: apikey
+            context: ./apikey
+            dockerfile: ./apikey/Dockerfile
+            var_name: APIKEY_VERSION
+          - service: jwt
+            context: ./jwt
+            dockerfile: ./jwt/Dockerfile
+            var_name: JWT_VERSION
+          - service: oidc-app
+            context: ./oidc
+            dockerfile: ./oidc/Dockerfile.app
+            var_name: OIDC_APP_VERSION
+          - service: mock-idp
+            context: ./oidc
+            dockerfile: ./oidc/Dockerfile.idp
+            var_name: MOCK_IDP_VERSION
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Resolve Environment Variables
+        id: vars
+        run: |
+          ENV_UPPER=$(echo "${{ inputs.environment }}" | tr '[:lower:]' '[:upper:]' | sed 's/PRODUCTION/PROD/')
+          VAR_NAME_ENV="${{ matrix.var_name }}_${ENV_UPPER}"
+          TAG=$(echo '${{ toJSON(vars) }}' | jq -r --arg env_key "$VAR_NAME_ENV" --arg base_key "${{ matrix.var_name }}" '.[$env_key] // .[$base_key] // ""')
+          
+          if [[ -z "$TAG" || "$TAG" == "null" ]]; then
+            echo "::error::No version tag found for '${{ matrix.var_name }}'."
+            exit 1
+          fi
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'ap-southeast-3' }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and Push (Candidate)
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ${{ steps.login-ecr.outputs.registry }}/${{ matrix.service }}:${{ steps.vars.outputs.tag }}-candidate
+          provenance: false
+          sbom: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Security Scan
+        id: scan
+        run: |
+          echo "::group::ECR Scan"
+          aws ecr start-image-scan --repository-name ${{ matrix.service }} --image-id imageTag=${{ steps.vars.outputs.tag }}-candidate || true
+          aws ecr wait image-scan-complete --repository-name ${{ matrix.service }} --image-id imageTag=${{ steps.vars.outputs.tag }}-candidate
+          SCAN_RESULTS=$(aws ecr describe-image-scan-findings --repository-name ${{ matrix.service }} --image-id imageTag=${{ steps.vars.outputs.tag }}-candidate --query 'imageScanFindings.findingSeverityCounts' --output json)
+          
+          CRITICAL=$(echo "$SCAN_RESULTS" | jq -r '.CRITICAL // 0' 2>/dev/null || echo 0)
+          if [[ "$CRITICAL" != "null" && "$CRITICAL" -gt 0 ]]; then
+            echo "::error::CRITICAL vulnerabilities found in ${{ matrix.service }}!"
+            exit 1
+          fi
+          echo "::endgroup::"
+
+  deploy-lambda:
+    name: Approve & Update Lambda (${{ matrix.service }})
+    needs: build-and-scan
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}-approval
+    
+    permissions:
+      id-token: write
+      contents: read
+
+    strategy:
+      matrix:
+        include:
+          - service: apikey
+            lambda_name: apikey-function
+            var_name: APIKEY_VERSION
+          - service: jwt
+            lambda_name: jwt-function
+            var_name: jwt-function
+          - service: oidc-app
+            lambda_name: oidc-app-function
+            var_name: OIDC_APP_VERSION
+          - service: mock-idp
+            lambda_name: mock-idp-function
+            var_name: MOCK_IDP_VERSION
+
+    steps:
+      - name: Resolve Tag
+        id: vars
+        run: |
+          ENV_UPPER=$(echo "${{ inputs.environment }}" | tr '[:lower:]' '[:upper:]' | sed 's/PRODUCTION/PROD/')
+          VAR_NAME_ENV="${{ matrix.var_name }}_${ENV_UPPER}"
+          TAG=$(echo '${{ toJSON(vars) }}' | jq -r --arg env_key "$VAR_NAME_ENV" --arg base_key "${{ matrix.var_name }}" '.[$env_key] // .[$base_key] // ""')
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'ap-southeast-3' }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Update Lambda Function
+        run: |
+          IMAGE_URI="${{ steps.login-ecr.outputs.registry }}/${{ matrix.service }}:${{ steps.vars.outputs.tag }}-candidate"
+          echo "🚀 Deploying to Lambda: ${{ matrix.lambda_name }}"
+          aws lambda update-function-code --function-name ${{ matrix.lambda_name }} --image-uri $IMAGE_URI

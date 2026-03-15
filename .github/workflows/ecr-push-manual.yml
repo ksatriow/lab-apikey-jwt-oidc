@@ -1,0 +1,187 @@
+name: Reusable ECR Push (Gated)
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+        description: "Target environment (e.g., dev, prod)"
+
+jobs:
+  build-and-scan:
+    name: Build & Scan (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    
+    permissions:
+      id-token: write
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: apikey
+            context: ./apikey
+            dockerfile: ./apikey/Dockerfile
+            var_name: APIKEY_VERSION
+          - service: jwt
+            context: ./jwt
+            dockerfile: ./jwt/Dockerfile
+            var_name: JWT_VERSION
+          - service: oidc-app
+            context: ./oidc
+            dockerfile: ./oidc/Dockerfile.app
+            var_name: OIDC_APP_VERSION
+          - service: mock-idp
+            context: ./oidc
+            dockerfile: ./oidc/Dockerfile.idp
+            var_name: MOCK_IDP_VERSION
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Resolve Tag
+        id: vars
+        run: |
+          ENV_UPPER=$(echo "${{ inputs.environment }}" | tr '[:lower:]' '[:upper:]' | sed 's/PRODUCTION/PROD/')
+          VAR_NAME_ENV="${{ matrix.var_name }}_${ENV_UPPER}"
+          TAG=$(echo '${{ toJSON(vars) }}' | jq -r --arg env_key "$VAR_NAME_ENV" --arg base_key "${{ matrix.var_name }}" '.[$env_key] // .[$base_key] // ""')
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'ap-southeast-3' }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and Push (Candidate)
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ${{ steps.login-ecr.outputs.registry }}/${{ matrix.service }}:${{ steps.vars.outputs.tag }}-candidate
+          provenance: false
+          sbom: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Security Scan
+        id: scan
+        run: |
+          echo "::group::ECR Scan & Data Collection"
+          # Trigger scan and wait
+          aws ecr start-image-scan --repository-name ${{ matrix.service }} --image-id imageTag=${{ steps.vars.outputs.tag }}-candidate || true
+          
+          echo "Waiting for scan to complete..."
+          aws ecr wait image-scan-complete --repository-name ${{ matrix.service }} --image-id imageTag=${{ steps.vars.outputs.tag }}-candidate
+          
+          # 1. Get Severity Counts (Summary)
+          SCAN_SUMMARY=$(aws ecr describe-image-scan-findings \
+            --repository-name ${{ matrix.service }} \
+            --image-id imageTag=${{ steps.vars.outputs.tag }}-candidate \
+            --query 'imageScanFindings.findingSeverityCounts' --output json)
+          
+          # 2. Get Top 10 Detailed Findings (CVE ID, Severity, Description)
+          DETAILED_FINDINGS=$(aws ecr describe-image-scan-findings \
+            --repository-name ${{ matrix.service }} \
+            --image-id imageTag=${{ steps.vars.outputs.tag }}-candidate \
+            --max-items 10 \
+            --query 'imageScanFindings.findings[].{CVE:name, Level:severity, Package:attributes[?name==`package_name`].value | [0]}' --output json)
+
+          # Handle multi-line outputs for GITHUB_OUTPUT
+          {
+            echo "summary<<EOF"
+            echo "$SCAN_SUMMARY"
+            echo "EOF"
+            
+            echo "details<<EOF"
+            echo "$DETAILED_FINDINGS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          # 3. Fail on CRITICAL
+          CRITICAL=$(echo "$SCAN_SUMMARY" | jq -r '.CRITICAL // 0' 2>/dev/null || echo 0)
+          
+          # 4. Generate GitHub Job Summary (Premium UI)
+          echo "### 🛡️ Security Scan Report: ${{ matrix.service }}" >> $GITHUB_STEP_SUMMARY
+          echo "| Severity | Count |" >> $GITHUB_STEP_SUMMARY
+          echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔴 CRITICAL | $(echo $SCAN_SUMMARY | jq -r '.CRITICAL // 0') |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🟠 HIGH | $(echo $SCAN_SUMMARY | jq -r '.HIGH // 0') |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🟡 MEDIUM | $(echo $SCAN_SUMMARY | jq -r '.MEDIUM // 0') |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔵 LOW | $(echo $SCAN_SUMMARY | jq -r '.LOW // 0') |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### Top Vulnerabilities" >> $GITHUB_STEP_SUMMARY
+          echo "$DETAILED_FINDINGS" | jq -r 'if length > 0 then .[] | "- **\(.CVE)** (\(.Level)): Impacting \(.Package)" else "No significant vulnerabilities found." end' >> $GITHUB_STEP_SUMMARY
+
+          if [[ "$CRITICAL" != "null" && "$CRITICAL" -gt 0 ]]; then
+            echo "::error::CRITICAL vulnerabilities found in ${{ matrix.service }}! Blocking promotion."
+            exit 1
+          fi
+          echo "::endgroup::"
+
+  promote-to-release:
+    name: Approve & Release (${{ matrix.service }})
+    needs: build-and-scan
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}-approval
+    
+    permissions:
+      id-token: write
+      contents: read
+
+    strategy:
+      matrix:
+        include:
+          - service: apikey
+            var_name: APIKEY_VERSION
+          - service: jwt
+            var_name: JWT_VERSION
+          - service: oidc-app
+            var_name: OIDC_APP_VERSION
+          - service: mock-idp
+            var_name: MOCK_IDP_VERSION
+
+    steps:
+      - name: Resolve Tag
+        id: vars
+        run: |
+          ENV_UPPER=$(echo "${{ inputs.environment }}" | tr '[:lower:]' '[:upper:]' | sed 's/PRODUCTION/PROD/')
+          VAR_NAME_ENV="${{ matrix.var_name }}_${ENV_UPPER}"
+          TAG=$(echo '${{ toJSON(vars) }}' | jq -r --arg env_key "$VAR_NAME_ENV" --arg base_key "${{ matrix.var_name }}" '.[$env_key] // .[$base_key] // ""')
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'ap-southeast-3' }}
+
+      - name: Promote Image in ECR
+        run: |
+          REPO="${{ matrix.service }}"
+          CANDIDATE_TAG="${{ steps.vars.outputs.tag }}-candidate"
+          FINAL_TAG="${{ steps.vars.outputs.tag }}"
+          
+          echo "🏷️ Promoting $REPO:$CANDIDATE_TAG to $REPO:$FINAL_TAG"
+          
+          MANIFEST=$(aws ecr batch-get-image --repository-name $REPO --image-ids imageTag=$CANDIDATE_TAG --query 'images[0].imageManifest' --output text)
+          
+          if [[ -z "$MANIFEST" || "$MANIFEST" == "None" ]]; then
+            echo "::error::Manifest not found for $REPO:$CANDIDATE_TAG"
+            exit 1
+          fi
+          
+          aws ecr put-image --repository-name $REPO --image-tag $FINAL_TAG --image-manifest "$MANIFEST"
+          echo "✅ Promotion complete!"
