@@ -279,7 +279,7 @@ A few things worth calling out since this is a POC:
 To get the pipeline running, you need to configure **GitHub Environments**. Follow this checklist:
 
 ### 1. Create Environments
-Go to **Settings > Environments** and create two: `dev` and `production`.
+Go to **Settings > Environments** and create two: `dev` and `prod`.
 
 ### 2. Configure Dedicated Secrets & Variables
 Add these values **inside each specific environment** (not as global Repository Secrets):
@@ -288,16 +288,16 @@ Add these values **inside each specific environment** (not as global Repository 
 | :--- | :--- | :--- | :--- |
 | **`dev`** | **Secret** | `AWS_ROLE_ARN` | IAM Role ARN for **Development Account** |
 | | **Variable** | `AWS_REGION` | e.g. `ap-southeast-3` |
-| | **Variable** | `APIKEY_VERSION_DEV` | e.g. `1.0.0` |
-| | **Variable** | `JWT_VERSION_DEV` | e.g. `1.0.1` |
-| | **Variable** | `OIDC_APP_VERSION_DEV` | e.g. `1.0.3` |
-| | **Variable** | `MOCK_IDP_VERSION_DEV` | e.g. `1.0.4` |
-| **`production`** | **Secret** | `AWS_ROLE_ARN` | IAM Role ARN for **Production Account** |
+| | **Variable** | `APIKEY_VERSION` | e.g. `1.0.0` |
+| | **Variable** | `JWT_VERSION` | e.g. `1.0.1` |
+| | **Variable** | `OIDC_APP_VERSION` | e.g. `1.0.3` |
+| | **Variable** | `MOCK_IDP_VERSION` | e.g. `1.0.4` |
+| **`prod`** | **Secret** | `AWS_ROLE_ARN` | IAM Role ARN for **Production Account** |
 | | **Variable** | `AWS_REGION` | e.g. `ap-southeast-3` |
-| | **Variable** | `APIKEY_VERSION_PROD` | e.g. `0.0.1` |
-| | **Variable** | `JWT_VERSION_PROD` | e.g. `0.0.2` |
-| | **Variable** | `OIDC_APP_VERSION_PROD` | e.g. `0.0.3` |
-| | **Variable** | `MOCK_IDP_VERSION_PROD` | e.g. `0.0.4` |
+| | **Variable** | `APIKEY_VERSION` | e.g. `0.0.1` |
+| | **Variable** | `JWT_VERSION` | e.g. `0.0.2` |
+| | **Variable** | `OIDC_APP_VERSION` | e.g. `0.0.3` |
+| | **Variable** | `MOCK_IDP_VERSION` | e.g. `0.0.4` |
 
 ### 3. Global Secrets (Repository Level)
 Configure these globally as they are shared across environments:
