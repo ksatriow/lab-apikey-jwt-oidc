@@ -9,7 +9,7 @@ The pipeline uses a **Reusable Workflow** pattern to ensure consistency while ma
 ### Workflow Files:
 - **[ecr-push.yml](.github/workflows/ecr-push.yml)**: The **Core Engine**. Handles Docker builds, ECR caching, security scanning, and multi-account logic.
 - **[build_dev.yaml](.github/workflows/build_dev.yaml)**: Triggers on push to `develop` branch. Targets the `dev` environment.
-- **[build_prod.yaml](.github/workflows/build_prod.yaml)**: Triggers on push to `main` branch. Targets the `production` environment.
+- **[build_prod.yaml](.github/workflows/build_prod.yaml)**: Triggers on push to `main` branch. Targets the `prod` environment.
 
 ### Multi-Account Flow:
 ```mermaid
@@ -20,14 +20,14 @@ graph LR
     subgraph "GitHub Environment: dev"
     B -.-> B_NOT[No Access]
     D --> D_ENV[Env Context: dev]
-    D_ENV --> D_SEC[Load AWS_ROLE_ARN_DEV]
-    D_ENV --> D_VAR[Load APIKEY_VERSION_DEV]
+    D_ENV --> D_SEC[Load AWS_ROLE_ARN]
+    D_ENV --> D_VAR[Load APIKEY_VERSION]
     end
     
-    subgraph "GitHub Environment: production"
-    B --> B_ENV[Env Context: production]
-    B_ENV --> B_SEC[Load AWS_ROLE_ARN_PROD]
-    B_ENV --> B_VAR[Load APIKEY_VERSION_PROD]
+    subgraph "GitHub Environment: prod"
+    B --> B_ENV[Env Context: prod]
+    B_ENV --> B_SEC[Load AWS_ROLE_ARN]
+    B_ENV --> B_VAR[Load APIKEY_VERSION]
     D -.-> D_NOT[No Access]
     end
     
@@ -43,13 +43,13 @@ Standardizing on **GitHub Environments** allows us to deploy to completely diffe
 
 ### 1. Identity over Keys (AWS OIDC)
 We use **OpenID Connect (OIDC)** to authenticate with AWS. This eliminates the need for long-lived IAM Access Keys.
-- Each environment (`dev`, `production`) uses its own **IAM Role ARN**.
+- Each environment (`dev`, `prod`) uses its own **IAM Role ARN**.
 - Trust is established via a specific GitHub metadata (`sub` claim) linking the repository + environment to the AWS Role.
 
 ### 2. Hierarchical Image Tagging
 The pipeline resolves image tags using a dual-lookup strategy:
 1.  **Environment Specific**: Looks for `${SERVICE}_VERSION_${ENV}` (e.g., `APIKEY_VERSION_PROD`).
-2.  **Global Fallback**: Falls back to `${SERVICE}_VERSION` if the environment-specific one isn't found.
+2.  **Generic (Scoped)**: Falls back to `${SERVICE}_VERSION` (e.g., `APIKEY_VERSION`). This is the recommended way when using GitHub Environments.
 
 ### 3. Automated Security Gates
 - **ECR Image Scanning**: Triggered immediately after push.
@@ -71,7 +71,7 @@ To minimize build times (from minutes down to seconds), the pipeline includes:
 ### 1. Configure GitHub Environments
 Go to **Settings > Environments** and create:
 - `dev`
-- `production`
+- `prod`
 
 Inside each environment, set the following:
 | Type | Name | Description |
@@ -105,7 +105,7 @@ In each AWS Account, create an OIDC Identity Provider for GitHub and a Role with
     ]
 }
 ```
-*Replace `<ENV_NAME>` with `dev` or `production` to restrict the Role to a specific environment.*
+*Replace `<ENV_NAME>` with `dev` or `prod` to restrict the Role to a specific environment.*
 
 ### 3. Notification Setup
 The pipeline uses `ksatriow/action-mailer` to send build reports.

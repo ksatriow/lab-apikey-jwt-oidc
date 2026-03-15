@@ -18,5 +18,5 @@ jobs:
     name: Build & Release [PROD]
     uses: ./.github/workflows/ecr-push.yml
     with:
-      environment: production
+      environment: prod
     secrets: inherit
