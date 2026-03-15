@@ -274,6 +274,53 @@ A few things worth calling out since this is a POC:
 
 ---
 
+## 🛠️ Environment & Secret Setup Checklist
+
+To get the pipeline running, you need to configure **GitHub Environments**. Follow this checklist:
+
+### 1. Create Environments
+Go to **Settings > Environments** and create two: `dev` and `production`.
+
+### 2. Configure Dedicated Secrets & Variables
+Add these values **inside each specific environment** (not as global Repository Secrets):
+
+| Environment | Key Type | Variable Name | Value / Description |
+| :--- | :--- | :--- | :--- |
+| **`dev`** | **Secret** | `AWS_ROLE_ARN` | IAM Role ARN for **Development Account** |
+| | **Variable** | `AWS_REGION` | e.g. `ap-southeast-3` |
+| | **Variable** | `APIKEY_VERSION_DEV` | e.g. `1.0.0` |
+| | **Variable** | `JWT_VERSION_DEV` | e.g. `1.0.1` |
+| | **Variable** | `OIDC_APP_VERSION_DEV` | e.g. `1.0.3` |
+| | **Variable** | `MOCK_IDP_VERSION_DEV` | e.g. `1.0.4` |
+| **`production`** | **Secret** | `AWS_ROLE_ARN` | IAM Role ARN for **Production Account** |
+| | **Variable** | `AWS_REGION` | e.g. `ap-southeast-3` |
+| | **Variable** | `APIKEY_VERSION_PROD` | e.g. `0.0.1` |
+| | **Variable** | `JWT_VERSION_PROD` | e.g. `0.0.2` |
+| | **Variable** | `OIDC_APP_VERSION_PROD` | e.g. `0.0.3` |
+| | **Variable** | `MOCK_IDP_VERSION_PROD` | e.g. `0.0.4` |
+
+### 3. Global Secrets (Repository Level)
+Configure these globally as they are shared across environments:
+- `SMTP_USERNAME`: For email notifications.
+- `SMTP_PASSWORD`: For email notifications.
+
+---
+
+## 🚀 CI/CD & Deployment
+
+This project is equipped with a **Production-Grade CI/CD Pipeline** using GitHub Actions and Amazon ECR.
+
+### Key Features:
+- **Multi-Account Ready**: Securely deploy to different AWS accounts (Dev/Prod) using GitHub Environments.
+- **Top-Tier Security**: Passwordless authentication via AWS OIDC and automatic **CRITICAL** vulnerability scanning.
+- **High Performance**: Optimized Docker builds using `Buildx` and GitHub Actions caching.
+- **Hierarchical Versions**: Flexible image tagging that supports environment-level overrides.
+
+For full setup instructions, IAM policies, and architecture details, see:
+👉 **[Detailed CI/CD Documentation](CI-CD-PIPELINE.md)**
+
+---
+
 ## Dependencies
 
 | Package | Used in | Purpose |

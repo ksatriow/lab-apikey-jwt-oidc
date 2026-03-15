@@ -1,81 +1,87 @@
-# Enterprise-Grade CI/CD & AWS Setup
+# Enterprise-Grade CI/CD Pipeline
 
-This repository uses a high-performance, enterprise-grade GitHub Actions pipeline (`.github/workflows/ecr-push.yml`) to build and push Docker images to Amazon ECR.
+This repository implements a **Production-Ready** CI/CD architecture designed for high-standard IT environments. It leverages GitHub Actions, Amazon ECR, and OIDC for secure, scalable, and high-performance container deployments.
 
-## 🏗️ Pipeline Architecture
+## 🏗️ Architecture Overview
 
-This repository uses a **Reusable Workflow Architecture** to separate environments while keeping the build logic centralized.
+The pipeline uses a **Reusable Workflow** pattern to ensure consistency while maintaining strict isolation between development and production environments.
 
 ### Workflow Files:
-- [ecr-push.yml](file:///Users/kukuhsatriowibowo/lab-apikey-jwt-oidc/.github/workflows/ecr-push.yml): The **Template**. Contains the core logic for building, scanning, and pushing to ECR.
-- [build_dev.yaml](file:///Users/kukuhsatriowibowo/lab-apikey-jwt-oidc/.github/workflows/build_dev.yaml): The **Dev Caller**. Triggers on `develop` branch.
-- [build_prod.yaml](file:///Users/kukuhsatriowibowo/lab-apikey-jwt-oidc/.github/workflows/build_prod.yaml): The **Prod Caller**. Triggers on `main` branch.
+- **[ecr-push.yml](.github/workflows/ecr-push.yml)**: The **Core Engine**. Handles Docker builds, ECR caching, security scanning, and multi-account logic.
+- **[build_dev.yaml](.github/workflows/build_dev.yaml)**: Triggers on push to `develop` branch. Targets the `dev` environment.
+- **[build_prod.yaml](.github/workflows/build_prod.yaml)**: Triggers on push to `main` branch. Targets the `production` environment.
 
-1. **Manager Updates Version (In GitHub Environments):** Go to **Settings** -> **Environments** -> Select `dev` or `production`.
-2. **Set Variables in Environment:**
-   - In the **dev** environment: Set `APIKEY_VERSION_DEV`, `JWT_VERSION_DEV`, etc.
-   - In the **production** environment: Set `APIKEY_VERSION_PROD`, `JWT_VERSION_PROD`, etc.
-3. **Trigger Release:** Run the corresponding workflow from the **Actions** tab. The template will automatically pull the correct variables from the environment you selected.
-
-*Note:* Pushes to `main` (via `build_prod.yaml`) automatically target the `production` environment, enforcing any "Required Reviewers" approval gate configured in GitHub.
-
----
-
-### 📧 Notifikasi Email (via curl)
-
-Pipeline ini dikonfigurasi untuk mengirimkan notifikasi status rilis (Gagal/Berhasil) ke gateway internal perusahaan menggunakan `curl`:
-
-1.  **Siapkan GitHub Secrets**:
-    - `NOTIFY_ENDPOINT`: URL API gateway perusahaan.
-    - `NOTIFY_TOKEN`: Token otentikasi (Bearer).
-2.  **Mekanisme**: Setiap build selesai (baik sukses maupun gagal), pipeline akan memicu pemanggilan API POST dengan payload JSON yang berisi status, nama service, environment, dan link log.
-
----
-
-### 🔐 Security & IAM Roles
-
-Untuk membedakan izin AWS (*IAM Role*) antara **dev** dan **production**, kita menggunakan **GitHub Secrets** dengan akhiran (prefix) yang sama seperti variabel:
-
-1.  **Buka GitHub Settings** -> **Secrets and variables** -> **Actions** -> **Secrets**.
-2.  Tambahkan dua secret baru:
-    - **`AWS_ROLE_ARN_DEV`**: Masukkan ARN Role khusus Development.
-    - **`AWS_ROLE_ARN_PROD`**: Masukkan ARN Role khusus Production.
-
-*Note:* Pipeline akan otomatis mendeteksi environment yang sedang berjalan dan mengambil secret yang sesuai (`_DEV` jika di dev, `_PROD` jika di production).
-
-### 📜 IAM Trust Policy (Wajib Update)
-
-Karena kita menggunakan Environment, Anda **WAJIB** mengupdate **Trust Relationship** pada IAM Role di AWS Console agar mengizinkan akses dari sub-path repositori Anda:
-
-## 🔒 Configuration Guide
-
-The following guide explains how to set up the OIDC trust relationship and GitHub Environments required for this pipeline to work.
-
-
-This guide explains how to set up the trust relationship between GitHub Actions and your AWS account using OIDC. This allows GitHub to push Docker images to ECR without needing long-lived access keys.
+### Multi-Account Flow:
+```mermaid
+graph LR
+    A[Push to main] --> B(Job: production-release)
+    C[Push to develop] --> D(Job: development-release)
+    
+    subgraph "GitHub Environment: dev"
+    B -.-> B_NOT[No Access]
+    D --> D_ENV[Env Context: dev]
+    D_ENV --> D_SEC[Load AWS_ROLE_ARN_DEV]
+    D_ENV --> D_VAR[Load APIKEY_VERSION_DEV]
+    end
+    
+    subgraph "GitHub Environment: production"
+    B --> B_ENV[Env Context: production]
+    B_ENV --> B_SEC[Load AWS_ROLE_ARN_PROD]
+    B_ENV --> B_VAR[Load APIKEY_VERSION_PROD]
+    D -.-> D_NOT[No Access]
+    end
+    
+    D_SEC --> AWS_DEV[(AWS Account: DEV)]
+    B_SEC --> AWS_PROD[(AWS Account: PROD)]
+```
 
 ---
 
-## 1. Create OIDC Identity Provider
+## 🔐 Security & Multi-Account Isolation
 
-You only need to do this once per AWS account.
+Standardizing on **GitHub Environments** allows us to deploy to completely different AWS accounts with zero risk of cross-contamination.
 
-1.  Open the **IAM Console**.
-2.  Go to **Identity Providers** > **Add provider**.
-3.  Select **OpenID Connect**.
-4.  **Provider URL**: `https://token.actions.githubusercontent.com` (Click "Get thumbprint").
-5.  **Audience**: `sts.amazonaws.com`.
-6.  Click **Add provider**.
+### 1. Identity over Keys (AWS OIDC)
+We use **OpenID Connect (OIDC)** to authenticate with AWS. This eliminates the need for long-lived IAM Access Keys.
+- Each environment (`dev`, `production`) uses its own **IAM Role ARN**.
+- Trust is established via a specific GitHub metadata (`sub` claim) linking the repository + environment to the AWS Role.
+
+### 2. Hierarchical Image Tagging
+The pipeline resolves image tags using a dual-lookup strategy:
+1.  **Environment Specific**: Looks for `${SERVICE}_VERSION_${ENV}` (e.g., `APIKEY_VERSION_PROD`).
+2.  **Global Fallback**: Falls back to `${SERVICE}_VERSION` if the environment-specific one isn't found.
+
+### 3. Automated Security Gates
+- **ECR Image Scanning**: Triggered immediately after push.
+- **Fail-on-Critical**: The pipeline **will exit with an error** if any **CRITICAL** vulnerabilities are found. This prevents unsafe images from being available for deployment.
 
 ---
 
-## 2. Create IAM Role for GitHub Actions
+## ⚡ Performance Optimizations
 
-This role will be assumed by the GitHub Action workflow.
+To minimize build times (from minutes down to seconds), the pipeline includes:
+- **Docker Buildx**: Modern builder support.
+- **GHA Caching**: Uses `type=gha` backend. Docker layers are stored in GitHub's internal cache and reused across runs.
+- **Parallel Matrix**: Builds all services (`apikey`, `jwt`, `oidc-app`, `mock-idp`) in parallel processing.
 
-1.  Go to **IAM Roles** > **Create role**.
-2.  Select **Custom trust policy**.
-3.  Paste the following policy (replace `<ORG>` and `<REPO>` with your GitHub details):
+---
+
+## 🛠️ Setup Guide
+
+### 1. Configure GitHub Environments
+Go to **Settings > Environments** and create:
+- `dev`
+- `production`
+
+Inside each environment, set the following:
+| Type | Name | Description |
+|---|---|---|
+| **Secret** | `AWS_ROLE_ARN` | The IAM Role ARN for that specific AWS Account. |
+| **Variable** | `AWS_REGION` | The region (e.g., `ap-southeast-3`). |
+| **Variable** | `SERVICE_VERSION` | Version tag for your containers. |
+
+### 2. Configure AWS OIDC Trust
+In each AWS Account, create an OIDC Identity Provider for GitHub and a Role with the following **Trust Policy**:
 
 ```json
 {
@@ -84,7 +90,7 @@ This role will be assumed by the GitHub Action workflow.
         {
             "Effect": "Allow",
             "Principal": {
-                "Federated": "arn:aws:iam::172982316609:oidc-provider/token.actions.githubusercontent.com"
+                "Federated": "arn:aws:iam::<ACCOUNT_ID>:oidc-provider/token.actions.githubusercontent.com"
             },
             "Action": "sts:AssumeRoleWithWebIdentity",
             "Condition": {
@@ -92,137 +98,24 @@ This role will be assumed by the GitHub Action workflow.
                     "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
                 },
                 "StringLike": {
-                    "token.actions.githubusercontent.com:sub": [
-                        "repo:ksatriow/lab-apikey-jwt-oidc:ref:refs/heads/main",
-                        "repo:ksatriow/lab-apikey-jwt-oidc:ref:refs/heads/develop",
-                        "repo:ksatriow/lab-apikey-jwt-oidc:*"
-                    ]
+                    "token.actions.githubusercontent.com:sub": "repo:ksatriow/lab-apikey-jwt-oidc:environment:<ENV_NAME>"
                 }
             }
         }
     ]
 }
 ```
-> [!IMPORTANT]
-> Pastikan Anda menggunakan **`StringLike`** (bukan `StringEquals`) dan akhiri dengan **`:*`**. Ini wajib karena kita menggunakan "GitHub Environments" (dev/production), sehingga ID pengenal dari GitHub akan berubah-ubah formatnya. Wildcard `:*` memastikan AWS tetap mengenali repositori Anda baik saat rilis reguler maupun manual.
+*Replace `<ENV_NAME>` with `dev` or `production` to restrict the Role to a specific environment.*
 
-4.  Click **Next**.
-5.  Add permissions. Create a new policy with this **Least Privilege** configuration. This restricts GitHub's access ONLY to your specific repositories:
-
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Sid": "AllowAuthToken",
-      "Effect": "Allow",
-      "Action": "ecr:GetAuthorizationToken",
-      "Resource": "*"
-    },
-    {
-      "Sid": "AllowPushPullToSpecificRepos",
-      "Effect": "Allow",
-      "Action": [
-        "ecr:BatchCheckLayerAvailability",
-        "ecr:GetDownloadUrlForLayer",
-        "ecr:BatchGetImage",
-        "ecr:InitiateLayerUpload",
-        "ecr:UploadLayerPart",
-        "ecr:CompleteLayerUpload",
-        "ecr:PutImage",
-        "ecr:StartImageScan",
-        "ecr:DescribeImageScanFindings"
-      ],
-      "Resource": [
-        "arn:aws:ecr:<REGION>:<ACCOUNT_ID>:repository/apikey",
-        "arn:aws:ecr:<REGION>:<ACCOUNT_ID>:repository/jwt",
-        "arn:aws:ecr:<REGION>:<ACCOUNT_ID>:repository/oidc-app",
-        "arn:aws:ecr:<REGION>:<ACCOUNT_ID>:repository/mock-idp"
-      ]
-    }
-  ]
-}
-```
-
-## EXAMPLE
-
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Sid": "AllowAuthToken",
-      "Effect": "Allow",
-      "Action": "ecr:GetAuthorizationToken",
-      "Resource": "*"
-    },
-    {
-      "Sid": "AllowPushPullToSpecificRepos",
-      "Effect": "Allow",
-      "Action": [
-        "ecr:BatchCheckLayerAvailability",
-        "ecr:GetDownloadUrlForLayer",
-        "ecr:BatchGetImage",
-        "ecr:InitiateLayerUpload",
-        "ecr:UploadLayerPart",
-        "ecr:CompleteLayerUpload",
-        "ecr:PutImage",
-        "ecr:StartImageScan",
-        "ecr:DescribeImageScanFindings"
-      ],
-      "Resource": [
-        "arn:aws:ecr:ap-southeast-3:<ACCOUNT_ID>:repository/apikey",
-        "arn:aws:ecr:ap-southeast-3:<ACCOUNT_ID>:repository/jwt",
-        "arn:aws:ecr:ap-southeast-3:<ACCOUNT_ID>:repository/oidc-app",
-        "arn:aws:ecr:ap-southeast-3:<ACCOUNT_ID>:repository/mock-idp"
-      ]
-    }
-  ]
-}
-```
-
-
-> [!NOTE]
-> `ecr:GetAuthorizationToken` always requires `*` because it's a global call to authenticate with ECR. However, the subsequent actions are strictly limited to the listed repository ARNs.
-
-6.  Name the role (e.g., `github-actions-ecr-push`).
-7.  Copy the **Role ARN** (e.g., `arn:aws:iam::123456789012:role/github-actions-ecr-push`).
-
+### 3. Notification Setup
+The pipeline uses `ksatriow/action-mailer` to send build reports.
+- **Required Secrets**: `SMTP_USERNAME`, `SMTP_PASSWORD`.
+- **Configuration**: Edit `ecr-push.yml` to set your `from-email` and `to-email`.
 
 ---
 
-## 3. Configure GitHub Secrets & Variables
-
-In your GitHub repository, go to **Settings** > **Secrets and variables** > **Actions**.
-
-### Repository Secrets
-- `AWS_ROLE_ARN`: The ARN of the role you created in Step 2.
-
-### Repository Variables
-- `AWS_REGION`: The AWS region where your ECR repos are (e.g., `us-east-1`).
-
----
-
-## 5. Configure GitHub Environment for Production Approval
-
-To enforce an approval gate for production, you must use GitHub Environments.
-
-1.  In your GitHub repository, go to **Settings** > **Environments**.
-2.  Click **New environment**.
-3.  Name it `production`.
-4.  Under **Deployment protection rules**, check **Required reviewers**.
-5.  Add yourself (or others) as authorized reviewers.
-6.  Click **Save protection rules**.
-
-Now, whenever you run the workflow and select `production` as the environment, GitHub will pause the run and send an email/notification to the reviewers. The push to ECR will only proceed after it's approved.
-
----
-
-## 6. Create ECR Repositories
-
-Make sure to create these repositories in Amazon ECR before running the workflow:
-- `apikey`
-- `jwt`
-- `oidc-app`
-- `mock-idp`
-
+## 📊 Monitoring Releases
+Each release generates a rich log view:
+- **Collapsed Technical Logs**: Detailed Docker build outputs are grouped to keep the UI clean.
+- **Security Summary**: Scan results are printed directly in the job summary.
+- **Email Report**: A summary containing the commit, actor, and security status is sent upon completion.
